@@ -1,0 +1,93 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+build/*
+!build/installer.nsh
+src/renderer/pages-dist/
+skills-extracted/
+*.exe
+*.dmg
+*.AppImage
+
+# Electron
+out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+config.local.json
+
+# User data (这些会在用户的 AppData 目录中)
+# 不应该提交到仓库
+config.json
+data/
+user.sqlite
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.csv
+
+# Runtime uploads / generated outputs
+uploaded_files/
+chat_uploaded_files/
+tmp/
+output/
+outputs/
+report/
+reports/
+backups/
+*.backup-*.xlsx
+*.xlsx
+*.docx
+*.pyc
+__pycache__/
+
+# E2E / Playwright
+e2e/
+playwright-report/
+test-results/
+
+# Temporary files
+*.tmp
+*.temp
+tmpclaude-*-cwd
+nul
+
+# Claude Code CLI artifacts
+.claude/*
+!.claude/skills/
+.claude/skills/gitnexus/
+.claude/settings.local.json
+.codex-dev-logs/
+.codex-logs/
+.codex-runtime/
+.superpowers/
+.serena/
+
+# Release artifacts
+release/
+*.tar.gz
+.gitnexus

@@ -1,0 +1,992 @@
+/**
+ * 预加载脚本
+ * 在渲染进程中暴露安全的 IPC API
+ */
+
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+const bootstrapState = (() => {
+  try {
+    const bootstrap = ipcRenderer.sendSync('theme:bootstrapSync') || {};
+    return {
+      theme: bootstrap?.theme === 'dark' ? 'dark' : 'light',
+      colorScheme: typeof bootstrap?.colorScheme === 'string' && bootstrap.colorScheme.trim()
+        ? bootstrap.colorScheme.trim()
+        : 'ocean',
+      locale: typeof bootstrap?.locale === 'string' && bootstrap.locale.trim()
+        ? bootstrap.locale.trim()
+        : 'zh-CN'
+    };
+  } catch (err) {
+    console.warn('[Preload] Failed to get bootstrap settings:', err.message);
+    return {
+      theme: 'light',
+      colorScheme: 'ocean',
+      locale: 'zh-CN'
+    };
+  }
+})();
+
+const applyBootstrapToDocument = () => {
+  if (!document.documentElement) return;
+
+  document.documentElement.setAttribute('data-theme', bootstrapState.theme);
+  document.documentElement.setAttribute('data-color-scheme', bootstrapState.colorScheme);
+  document.documentElement.setAttribute('data-locale', bootstrapState.locale);
+  document.documentElement.setAttribute('lang', bootstrapState.locale === 'zh-CN' ? 'zh' : 'en');
+  document.documentElement.style.backgroundColor = bootstrapState.theme === 'dark' ? '#212121' : '#F7F7F8';
+  document.documentElement.style.colorScheme = bootstrapState.theme;
+
+  if (document.body) {
+    document.body.style.backgroundColor = bootstrapState.theme === 'dark' ? '#212121' : '#F7F7F8';
+  }
+};
+
+applyBootstrapToDocument();
+window.addEventListener('DOMContentLoaded', applyBootstrapToDocument, { once: true });
+
+const readFileAsBase64Payload = async (file) => {
+  if (!file || typeof file.arrayBuffer !== 'function') {
+    throw new Error('Invalid file upload')
+  }
+  const buffer = Buffer.from(await file.arrayBuffer())
+  return buffer.toString('base64')
+}
+
+const getPathForFileSafe = (file) => {
+  try {
+    if (webUtils && typeof webUtils.getPathForFile === 'function') {
+      return webUtils.getPathForFile(file) || ''
+    }
+  } catch {}
+  return typeof file?.path === 'string' ? file.path : ''
+}
+
+// 暴露 API 到渲染进程
+contextBridge.exposeInMainWorld('electronAPI', {
+  bootstrap: bootstrapState,
+
+  // 平台信息（供渲染进程判断 win32/darwin/linux）
+  platform: process.platform,
+  getPathForFile: getPathForFileSafe,
+
+  // ========================================
+  // Config 相关
+  // ========================================
+  authLogin: (payload) => ipcRenderer.invoke('auth:login', payload),
+  authGetCurrentUser: () => ipcRenderer.invoke('auth:getCurrentUser'),
+  authLogout: () => ipcRenderer.invoke('auth:logout'),
+
+  getConfig: () => ipcRenderer.invoke('config:get'),
+  saveConfig: (config) => ipcRenderer.invoke('config:save', config),
+  updateSettings: (settings) => ipcRenderer.invoke('settings:update', settings),
+  getConfigPath: () => ipcRenderer.invoke('config:getPath'),
+  
+  // Global Settings
+  getServiceProviders: () => ipcRenderer.invoke('config:getServiceProviders'),
+  getMarketConfig: () => ipcRenderer.invoke('config:getMarketConfig'),
+  updateMarketConfig: (config) => ipcRenderer.invoke('config:updateMarketConfig', config),
+  getTimeout: () => ipcRenderer.invoke('config:getTimeout'),
+  updateTimeout: (timeout) => ipcRenderer.invoke('config:updateTimeout', timeout),
+
+  // Max Active Sessions
+  getMaxActiveSessions: () => ipcRenderer.invoke('config:getMaxActiveSessions'),
+  updateMaxActiveSessions: (max) => ipcRenderer.invoke('config:updateMaxActiveSessions', max),
+
+  // Max History Sessions (左侧面板历史会话显示条数)
+  getMaxHistorySessions: () => ipcRenderer.invoke('config:getMaxHistorySessions'),
+  updateMaxHistorySessions: (max) => ipcRenderer.invoke('config:updateMaxHistorySessions', max),
+
+  // Autocompact Pct Override (自动压缩阈值百分比)
+  getAutocompactPctOverride: () => ipcRenderer.invoke('config:getAutocompactPctOverride'),
+  updateAutocompactPctOverride: (value) => ipcRenderer.invoke('config:updateAutocompactPctOverride', value),
+
+  // Terminal Settings (终端字体大小等)
+  getTerminalSettings: () => ipcRenderer.invoke('config:getTerminalSettings'),
+  updateTerminalSettings: (settings) => ipcRenderer.invoke('config:updateTerminalSettings', settings),
+
+  // ========================================
+  // API 配置相关
+  // ========================================
+  getAPIConfig: () => ipcRenderer.invoke('api:getConfig'),
+  updateAPIConfig: (apiConfig) => ipcRenderer.invoke('api:updateConfig', apiConfig),
+  validateAPIConfig: () => ipcRenderer.invoke('api:validate'),
+
+  // ========================================
+  // API Profile 管理
+  // ========================================
+  listAPIProfiles: () => ipcRenderer.invoke('api:listProfiles'),
+  getAPIProfile: (profileId) => ipcRenderer.invoke('api:getProfile', profileId),
+  addAPIProfile: (profileData) => ipcRenderer.invoke('api:addProfile', profileData),
+  updateAPIProfile: ({ profileId, updates }) => ipcRenderer.invoke('api:updateProfile', { profileId, updates }),
+  deleteAPIProfile: (profileId) => ipcRenderer.invoke('api:deleteProfile', profileId),
+  setDefaultProfile: (profileId) => ipcRenderer.invoke('api:setDefault', profileId),
+  getCurrentProfile: () => ipcRenderer.invoke('api:getCurrentProfile'),  // 返回默认 Profile
+
+  testConnection: (apiConfig) => ipcRenderer.invoke('api:testConnection', apiConfig),
+  fetchOfficialModels: (apiConfig) => ipcRenderer.invoke('api:fetchOfficialModels', apiConfig),
+
+  // ========================================
+  // 工程管理（数据库版）
+  // ========================================
+  // 列表
+  getProjects: (includeHidden = false) => ipcRenderer.invoke('project:getAll', includeHidden),
+  getHiddenProjects: () => ipcRenderer.invoke('project:getHidden'),
+  getProjectById: (projectId) => ipcRenderer.invoke('project:getById', projectId),
+
+  // 创建
+  createProject: (projectData) => ipcRenderer.invoke('project:create', projectData),
+  openProject: () => ipcRenderer.invoke('project:open'),
+
+  // 修改
+  updateProject: ({ projectId, updates }) => ipcRenderer.invoke('project:update', { projectId, updates }),
+  duplicateProject: (projectId) => ipcRenderer.invoke('project:duplicate', { projectId }),
+
+  // 删除/隐藏
+  hideProject: (projectId) => ipcRenderer.invoke('project:hide', projectId),
+  unhideProject: (projectId) => ipcRenderer.invoke('project:unhide', projectId),
+  deleteProject: ({ projectId, deleteSessions }) => ipcRenderer.invoke('project:delete', { projectId, deleteSessions }),
+
+  // 状态
+  toggleProjectPinned: (projectId) => ipcRenderer.invoke('project:togglePinned', projectId),
+  touchProject: (projectId) => ipcRenderer.invoke('project:touch', projectId),
+
+  // 工具
+  openFolder: (folderPath) => ipcRenderer.invoke('project:openFolder', folderPath),
+  checkPath: (folderPath) => ipcRenderer.invoke('project:checkPath', folderPath),
+
+  // 会话（占位）
+  newProjectSession: (projectId) => ipcRenderer.invoke('project:newSession', projectId),
+  openProjectSession: ({ projectId, sessionId }) => ipcRenderer.invoke('project:openSession', { projectId, sessionId }),
+
+  listProjectMasterRecords: (options) => ipcRenderer.invoke('projectLibrary:listMasterRecords', options),
+  createProjectMasterRecord: (payload) => ipcRenderer.invoke('projectLibrary:createMasterRecord', payload),
+  updateProjectMasterRecord: ({ id, updates }) => ipcRenderer.invoke('projectLibrary:updateMasterRecord', { id, updates }),
+  deleteProjectMasterRecord: (id) => ipcRenderer.invoke('projectLibrary:deleteMasterRecord', id),
+  listProjectLibraryWorkspaces: () => ipcRenderer.invoke('projectLibrary:listWorkspaces'),
+  createProjectLibraryWorkspace: (payload) => ipcRenderer.invoke('projectLibrary:createWorkspace', payload),
+  getProjectLibraryWorkspace: (id) => ipcRenderer.invoke('projectLibrary:getWorkspace', id),
+  deleteProjectLibraryWorkspace: (id) => ipcRenderer.invoke('projectLibrary:deleteWorkspace', id),
+  createProjectLibraryItem: (payload) => ipcRenderer.invoke('projectLibrary:createItem', payload),
+  uploadProjectLibraryFile: async ({ workspaceId, parentId = null, file }) => {
+    const contentBase64 = await readFileAsBase64Payload(file)
+    return ipcRenderer.invoke('projectLibrary:uploadFile', {
+      workspaceId,
+      parentId,
+      name: file?.name || '',
+      mimeType: file?.type || '',
+      sizeBytes: file?.size || 0,
+      contentBase64
+    })
+  },
+  updateProjectLibraryItem: ({ id, updates }) => ipcRenderer.invoke('projectLibrary:updateItem', { id, updates }),
+  deleteProjectLibraryItem: (id) => ipcRenderer.invoke('projectLibrary:deleteItem', id),
+  bindProjectLibraryAgentSession: ({ workspaceId, sessionId }) => ipcRenderer.invoke('projectLibrary:bindWorkspaceAgentSession', { workspaceId, sessionId }),
+  bindProjectLibraryItemAgentSession: ({ itemId, sessionId }) => ipcRenderer.invoke('projectLibrary:bindItemAgentSession', { itemId, sessionId }),
+
+  // ========================================
+  // Dialog 相关
+  // ========================================
+  selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
+  selectDirectory: (options) => ipcRenderer.invoke('dialog:selectDirectory', options),
+  getHomedir: () => (process.env.USERPROFILE || process.env.HOME || '').replace(/\\/g, '/'),
+  selectFile: (options) => ipcRenderer.invoke('dialog:selectFile', options),
+  selectFiles: (options) => ipcRenderer.invoke('dialog:selectFiles', options),
+  saveFile: ({ filename, content, ext }) => ipcRenderer.invoke('dialog:saveFile', { filename, content, ext }),
+  saveImage: ({ filename, base64, dir }) => ipcRenderer.invoke('dialog:saveImage', { filename, base64, dir }),
+  showNotification: ({ title, body }) => ipcRenderer.invoke('notification:show', { title, body }),
+
+  // ========================================
+  // Shell 相关
+  // ========================================
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  openPath: (filePath) => ipcRenderer.invoke('shell:openPath', filePath),
+  resolvePath: (basePath, relativePath) => ipcRenderer.invoke('path:resolve', basePath, relativePath),
+  pathExists: (targetPath) => ipcRenderer.invoke('path:exists', targetPath),
+
+  // ========================================
+  // 微信通知
+  // ========================================
+  startWeixinNotifyLogin: (options) => ipcRenderer.invoke('weixin-notify:startLogin', options),
+  waitWeixinNotifyLogin: (options) => ipcRenderer.invoke('weixin-notify:waitLogin', options),
+  listWeixinNotifyAccounts: () => ipcRenderer.invoke('weixin-notify:listAccounts'),
+  listWeixinNotifyTargets: () => ipcRenderer.invoke('weixin-notify:listTargets'),
+  updateWeixinNotifyTarget: (payload) => ipcRenderer.invoke('weixin-notify:updateTarget', payload),
+  deleteWeixinNotifyTarget: (payload) => ipcRenderer.invoke('weixin-notify:deleteTarget', payload),
+  pollWeixinNotifyOnce: (options) => ipcRenderer.invoke('weixin-notify:pollOnce', options),
+  sendWeixinNotifyText: (payload) => ipcRenderer.invoke('weixin-notify:sendText', payload),
+  bindSessionToWeixinTarget: (payload) => ipcRenderer.invoke('weixin-notify:bindSessionToTarget', payload),
+  unbindSessionWeixinTarget: (payload) => ipcRenderer.invoke('weixin-notify:unbindSessionTarget', payload),
+  getSessionWeixinBinding: (sessionId) => ipcRenderer.invoke('weixin-notify:getSessionBinding', sessionId),
+
+  // ========================================
+  // Claude 配置文件
+  // ========================================
+  getClaudeSettingsPath: () => ipcRenderer.invoke('claude:getSettingsPath'),
+  getProjectConfigPath: (projectPath) => ipcRenderer.invoke('claude:getProjectConfigPath', projectPath),
+
+  // ========================================
+  // Window 相关
+  // ========================================
+  openProfileManager: () => ipcRenderer.invoke('window:openProfileManager'),
+  openGlobalSettings: () => ipcRenderer.invoke('window:openGlobalSettings'),
+  openAppearanceSettings: () => ipcRenderer.invoke('window:openAppearanceSettings'),
+  openSettingsWorkbench: (options) => ipcRenderer.invoke('window:openSettingsWorkbench', options),
+  openIMBotSettings: () => ipcRenderer.invoke('window:openIMBotSettings'),
+  openProviderManager: () => ipcRenderer.invoke('window:openProviderManager'),
+  openSessionManager: (options) => ipcRenderer.invoke('window:openSessionManager', options),
+  openUpdateManager: () => ipcRenderer.invoke('window:openUpdateManager'),
+  openDingTalkSettings: () => ipcRenderer.invoke('window:openDingTalkSettings'),
+  openModelSettings: () => ipcRenderer.invoke('window:openModelSettings'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  focusMainWindow: () => ipcRenderer.invoke('window:focusMainWindow'),
+  setMainWindowTitleByMode: (mode) => ipcRenderer.invoke('window:setMainTitleByMode', mode),
+
+  // ========================================
+  // 服务商定义管理
+  // ========================================
+  listProviders: () => ipcRenderer.invoke('provider:list'),
+  getProvider: (id) => ipcRenderer.invoke('provider:get', id),
+  addProvider: (definition) => ipcRenderer.invoke('provider:add', definition),
+  updateProvider: ({ id, updates }) => ipcRenderer.invoke('provider:update', { id, updates }),
+  deleteProvider: (id) => ipcRenderer.invoke('provider:delete', id),
+
+  // ========================================
+  // 快捷命令管理
+  // ========================================
+  getQuickCommands: () => ipcRenderer.invoke('quickCommands:list'),
+  addQuickCommand: (command) => ipcRenderer.invoke('quickCommands:add', command),
+  updateQuickCommand: ({ id, name, command, color }) => ipcRenderer.invoke('quickCommands:update', { id, name, command, color }),
+  deleteQuickCommand: (id) => ipcRenderer.invoke('quickCommands:delete', id),
+
+  // ========================================
+  // Plugin 管理 (Claude Code Plugins)
+  // ========================================
+  listPlugins: () => ipcRenderer.invoke('plugins:list'),
+  getPluginDetails: (pluginId) => ipcRenderer.invoke('plugins:details', pluginId),
+  setPluginEnabled: (pluginId, enabled) => ipcRenderer.invoke('plugins:setEnabled', pluginId, enabled),
+  openPluginsFolder: () => ipcRenderer.invoke('plugins:openFolder'),
+  openInstalledPluginsJson: () => ipcRenderer.invoke('plugins:openInstalledJson'),
+  openSettingsJson: () => ipcRenderer.invoke('plugins:openSettingsJson'),
+
+  // Plugin CLI (install/uninstall/update)
+  pluginCliListAvailable: () => ipcRenderer.invoke('plugins:cli:listAvailable'),
+  pluginCliInstall: (pluginId) => ipcRenderer.invoke('plugins:cli:install', pluginId),
+  pluginCliUninstall: (pluginId) => ipcRenderer.invoke('plugins:cli:uninstall', pluginId),
+  pluginCliUpdate: (pluginId) => ipcRenderer.invoke('plugins:cli:update', pluginId),
+  pluginCliListMarketplaces: () => ipcRenderer.invoke('plugins:cli:listMarketplaces'),
+  pluginCliAddMarketplace: (source) => ipcRenderer.invoke('plugins:cli:addMarketplace', source),
+  pluginCliRemoveMarketplace: (name) => ipcRenderer.invoke('plugins:cli:removeMarketplace', name),
+  pluginCliUpdateMarketplace: (name) => ipcRenderer.invoke('plugins:cli:updateMarketplace', name),
+
+  // ========================================
+  // Skills 管理 (来自插件和项目级)
+  // ========================================
+  listSkillsGlobal: () => ipcRenderer.invoke('skills:listGlobal'),
+  listSkillsProject: (projectPath) => ipcRenderer.invoke('skills:listProject', projectPath),
+  listSkillsAll: (projectPath) => ipcRenderer.invoke('skills:listAll', projectPath),
+  deleteSkill: (params) => ipcRenderer.invoke('skills:delete', params),
+  copySkill: (params) => ipcRenderer.invoke('skills:copy', params),
+  getSkillRawContent: (params) => ipcRenderer.invoke('skills:getRawContent', params),
+  createSkillRaw: (params) => ipcRenderer.invoke('skills:createRaw', params),
+  updateSkillRaw: (params) => ipcRenderer.invoke('skills:updateRaw', params),
+  openSkillsFolder: (params) => ipcRenderer.invoke('skills:openFolder', params),
+  // 导入导出
+  validateSkillImport: (sourcePath) => ipcRenderer.invoke('skills:validateImport', sourcePath),
+  checkSkillConflicts: (params) => ipcRenderer.invoke('skills:checkConflicts', params),
+  importSkills: (params) => ipcRenderer.invoke('skills:import', params),
+  exportSkill: (params) => ipcRenderer.invoke('skills:export', params),
+  exportSkillsBatch: (params) => ipcRenderer.invoke('skills:exportBatch', params),
+
+  // Skills 市场
+  fetchMarketIndex: (registryUrl) => ipcRenderer.invoke('skills:market:fetchIndex', registryUrl),
+  installMarketSkill: (params) => ipcRenderer.invoke('skills:market:install', params),
+  installMarketSkillForce: (params) => ipcRenderer.invoke('skills:market:installForce', params),
+  checkMarketUpdates: (registryUrl) => ipcRenderer.invoke('skills:market:checkUpdates', registryUrl),
+  updateMarketSkill: (params) => ipcRenderer.invoke('skills:market:update', params),
+  listMarketInstalled: () => ipcRenderer.invoke('skills:market:installed'),
+
+  // ========================================
+  // Agents 管理 (三级: 用户全局/项目级/插件)
+  // ========================================
+  listAgentsUser: () => ipcRenderer.invoke('agents:listUser'),
+  listAgentsProject: (projectPath) => ipcRenderer.invoke('agents:listProject', projectPath),
+  listAgentsPlugin: () => ipcRenderer.invoke('agents:listPlugin'),
+  listAgentsAll: (projectPath) => ipcRenderer.invoke('agents:listAll', projectPath),
+  getAgentRawContent: (params) => ipcRenderer.invoke('agents:getRawContent', params),
+  createAgentRaw: (params) => ipcRenderer.invoke('agents:createRaw', params),
+  updateAgentRaw: (params) => ipcRenderer.invoke('agents:updateRaw', params),
+  deleteAgent: (params) => ipcRenderer.invoke('agents:delete', params),
+  copyAgent: (params) => ipcRenderer.invoke('agents:copy', params),
+  renameAgent: (params) => ipcRenderer.invoke('agents:rename', params),
+  openAgentsFolder: (params) => ipcRenderer.invoke('agents:openFolder', params),
+  // 导入导出
+  validateAgentImport: (sourcePath) => ipcRenderer.invoke('agents:validateImport', sourcePath),
+  checkAgentConflicts: (params) => ipcRenderer.invoke('agents:checkConflicts', params),
+  importAgents: (params) => ipcRenderer.invoke('agents:import', params),
+  exportAgent: (params) => ipcRenderer.invoke('agents:export', params),
+  exportAgentsBatch: (params) => ipcRenderer.invoke('agents:exportBatch', params),
+
+  // Agents 市场
+  installMarketAgent: (params) => ipcRenderer.invoke('agents:market:install', params),
+  installMarketAgentForce: (params) => ipcRenderer.invoke('agents:market:installForce', params),
+  listMarketInstalledAgents: () => ipcRenderer.invoke('agents:market:installed'),
+  checkAgentMarketUpdates: (params) => ipcRenderer.invoke('agents:market:checkUpdates', params),
+  updateMarketAgent: (params) => ipcRenderer.invoke('agents:market:update', params),
+
+  // Project Agent Profiles
+  resolveProjectAgentProfiles: (projectPath) => ipcRenderer.invoke('projectAgentProfiles:resolve', { projectPath }),
+  saveProjectAgentProfile: (params) => ipcRenderer.invoke('projectAgentProfiles:saveProfile', params),
+  deleteProjectAgentProfile: (params) => ipcRenderer.invoke('projectAgentProfiles:deleteProfile', params),
+  setDefaultProjectAgentProfile: (params) => ipcRenderer.invoke('projectAgentProfiles:setDefault', params),
+  toggleProjectAgentPinned: (params) => ipcRenderer.invoke('projectAgentProfiles:togglePinned', params),
+  resolveLegacyProjectAgentProfiles: (projectPath) => ipcRenderer.invoke('projectAgentProfiles:resolveLegacy', { projectPath }),
+  saveCapabilityProject: (params) => ipcRenderer.invoke('projectAgentProfiles:saveCapabilityProject', params),
+  deleteCapabilityProject: (params) => ipcRenderer.invoke('projectAgentProfiles:deleteCapabilityProject', params),
+  selectCapabilityProject: (params) => ipcRenderer.invoke('projectAgentProfiles:selectCapabilityProject', params),
+
+  // ========================================
+  // Hooks 管理 (来自 settings.json、插件和项目级，自动执行)
+  // ========================================
+  listHooksGlobal: () => ipcRenderer.invoke('hooks:listGlobal'),
+  listHooksProject: (projectPath) => ipcRenderer.invoke('hooks:listProject', projectPath),
+  listHooksAll: (projectPath) => ipcRenderer.invoke('hooks:listAll', projectPath),
+  getHooksSchema: () => ipcRenderer.invoke('hooks:getSchema'),
+  createHook: (params) => ipcRenderer.invoke('hooks:create', params),
+  updateHook: (params) => ipcRenderer.invoke('hooks:update', params),
+  deleteHook: (params) => ipcRenderer.invoke('hooks:delete', params),
+  copyHook: (params) => ipcRenderer.invoke('hooks:copy', params),
+  getHooksJson: (params) => ipcRenderer.invoke('hooks:getJson', params),
+  saveHooksJson: (params) => ipcRenderer.invoke('hooks:saveJson', params),
+
+  // ========================================
+  // MCP 管理 (四级: User/Local/Project/Plugin)
+  // ========================================
+  listMcpAll: (projectPath) => ipcRenderer.invoke('mcp:listAll', projectPath),
+  listMcpUser: () => ipcRenderer.invoke('mcp:listUser'),
+  listMcpLocal: (projectPath) => ipcRenderer.invoke('mcp:listLocal', projectPath),
+  listMcpProject: (projectPath) => ipcRenderer.invoke('mcp:listProject', projectPath),
+  listMcpPlugin: () => ipcRenderer.invoke('mcp:listPlugin'),
+  createMcp: (params) => ipcRenderer.invoke('mcp:create', params),
+  updateMcp: (params) => ipcRenderer.invoke('mcp:update', params),
+  deleteMcp: (params) => ipcRenderer.invoke('mcp:delete', params),
+
+  // MCP 市场
+  installMarketMcp: (params) => ipcRenderer.invoke('mcps:market:install', params),
+  installMarketMcpForce: (params) => ipcRenderer.invoke('mcps:market:installForce', params),
+  previewMarketMcpConfig: (params) => ipcRenderer.invoke('mcps:market:previewConfig', params),
+  updateMarketMcp: (params) => ipcRenderer.invoke('mcps:market:update', params),
+
+  // MCP 代理配置
+  getMcpProxyConfig: () => ipcRenderer.invoke('config:getMcpProxy'),
+  updateMcpProxyConfig: (config) => ipcRenderer.invoke('config:updateMcpProxy', config),
+  ensureProxySupport: (proxyUrl) => ipcRenderer.invoke('config:ensureProxySupport', proxyUrl),
+  applyProxyToAllMcps: (config) => ipcRenderer.invoke('mcps:applyProxyToAll', config),
+
+  // ========================================
+  // Claude Code Settings 管理 (permissions, env)
+  // ========================================
+  getClaudeSettings: (projectPath) => ipcRenderer.invoke('settings:getAll', projectPath),
+  getClaudePermissions: (params) => ipcRenderer.invoke('settings:getPermissions', params),
+  addClaudePermission: (params) => ipcRenderer.invoke('settings:addPermission', params),
+  updateClaudePermission: (params) => ipcRenderer.invoke('settings:updatePermission', params),
+  removeClaudePermission: (params) => ipcRenderer.invoke('settings:removePermission', params),
+  getClaudeEnv: (params) => ipcRenderer.invoke('settings:getEnv', params),
+  setClaudeEnv: (params) => ipcRenderer.invoke('settings:setEnv', params),
+  removeClaudeEnv: (params) => ipcRenderer.invoke('settings:removeEnv', params),
+  getClaudeSettingsRaw: (params) => ipcRenderer.invoke('settings:getRaw', params),
+  saveClaudeSettingsRaw: (params) => ipcRenderer.invoke('settings:saveRaw', params),
+
+  // ========================================
+  // 文件操作
+  // ========================================
+  openFileInEditor: (filePath) => ipcRenderer.invoke('file:openInEditor', filePath),
+  readJsonFile: (filePath) => ipcRenderer.invoke('file:readJson', filePath),
+  writeJsonFile: (filePath, data) => ipcRenderer.invoke('file:writeJson', filePath, data),
+  readFile: (filePath) => ipcRenderer.invoke('file:read', filePath),
+  writeFile: (filePath, content) => ipcRenderer.invoke('file:write', filePath, content),
+
+  // ========================================
+  // 会话历史管理（数据库版）
+  // ========================================
+  // 同步
+  syncSessions: () => ipcRenderer.invoke('session:sync'),
+  forceFullSync: () => ipcRenderer.invoke('session:forceFullSync'),
+  getSyncStatus: () => ipcRenderer.invoke('session:getSyncStatus'),
+  clearInvalidSessions: () => ipcRenderer.invoke('session:clearInvalid'),
+
+  // 项目和会话
+  getSessionProjects: () => ipcRenderer.invoke('session:getProjects'),
+  getProjectSessions: (projectId) => ipcRenderer.invoke('session:getProjectSessions', projectId),
+  getSessionMessages: ({ sessionId, limit, offset }) => ipcRenderer.invoke('session:getMessages', { sessionId, limit, offset }),
+
+  // 实时会话读取（文件版，用于主页面）
+  getFileBasedSessions: (projectPath) => ipcRenderer.invoke('session:getFileBasedSessions', projectPath),
+
+  // 删除历史会话文件（硬删除）
+  deleteSessionFile: ({ projectPath, sessionId }) => ipcRenderer.invoke('session:deleteFile', { projectPath, sessionId }),
+
+  // ========================================
+  // 会话面板管理（数据库 + 文件同步）
+  // ========================================
+  // 从数据库获取项目会话（用于左侧面板）- 通过 projectPath 查询
+  getProjectSessionsFromDb: (projectPath) => ipcRenderer.invoke('session:getProjectSessionsFromDb', projectPath),
+
+  // 同步项目会话到数据库（从文件系统增量同步）
+  syncProjectSessions: ({ projectPath, projectName }) => ipcRenderer.invoke('session:syncProjectSessions', { projectPath, projectName }),
+
+  // 更新会话标题（支持通过 sessionId 或 sessionUuid 更新）
+  updateSessionTitle: ({ sessionId, sessionUuid, title }) => ipcRenderer.invoke('session:updateTitle', { sessionId, sessionUuid, title }),
+
+  // 删除会话（数据库 + 文件）
+  deleteSessionWithFile: ({ sessionId, projectPath, sessionUuid }) =>
+    ipcRenderer.invoke('session:deleteWithFile', { sessionId, projectPath, sessionUuid }),
+
+  // 搜索
+  searchSessions: ({ query, projectId, sessionId, limit }) => ipcRenderer.invoke('session:search', { query, projectId, sessionId, limit }),
+
+  // 导出
+  exportSession: ({ sessionId, format }) => ipcRenderer.invoke('session:export', { sessionId, format }),
+
+  // 统计
+  getSessionStats: () => ipcRenderer.invoke('session:getStats'),
+
+  // ========================================
+  // 标签管理（会话级别）
+  // ========================================
+  createTag: ({ name, color }) => ipcRenderer.invoke('tag:create', { name, color }),
+  getAllTags: () => ipcRenderer.invoke('tag:getAll'),
+  deleteTag: (tagId) => ipcRenderer.invoke('tag:delete', tagId),
+  addTagToSession: ({ sessionId, tagId }) => ipcRenderer.invoke('tag:addToSession', { sessionId, tagId }),
+  removeTagFromSession: ({ sessionId, tagId }) => ipcRenderer.invoke('tag:removeFromSession', { sessionId, tagId }),
+  getSessionTags: (sessionId) => ipcRenderer.invoke('tag:getSessionTags', sessionId),
+  getSessionsByTag: (tagId) => ipcRenderer.invoke('tag:getSessions', tagId),
+
+  // ========================================
+  // 标签管理（消息级别）
+  // ========================================
+  addTagToMessage: ({ messageId, tagId }) => ipcRenderer.invoke('tag:addToMessage', { messageId, tagId }),
+  removeTagFromMessage: ({ messageId, tagId }) => ipcRenderer.invoke('tag:removeFromMessage', { messageId, tagId }),
+  getMessageTags: (messageId) => ipcRenderer.invoke('tag:getMessageTags', messageId),
+  getMessagesByTag: (tagId) => ipcRenderer.invoke('tag:getMessages', tagId),
+  getSessionTaggedMessages: (sessionId) => ipcRenderer.invoke('tag:getSessionTaggedMessages', sessionId),
+
+  // ========================================
+  // 提示词管理
+  // ========================================
+  listPrompts: (options) => ipcRenderer.invoke('prompts:list', options),
+  getPrompt: (promptId) => ipcRenderer.invoke('prompts:get', promptId),
+  getPromptByMarketId: (marketId) => ipcRenderer.invoke('prompts:getByMarketId', marketId),
+  createPrompt: (promptData) => ipcRenderer.invoke('prompts:create', promptData),
+  updatePrompt: ({ promptId, updates }) => ipcRenderer.invoke('prompts:update', promptId, updates),
+  deletePrompt: (promptId) => ipcRenderer.invoke('prompts:delete', promptId),
+  incrementPromptUsage: (promptId) => ipcRenderer.invoke('prompts:incrementUsage', promptId),
+  togglePromptFavorite: (promptId) => ipcRenderer.invoke('prompts:toggleFavorite', promptId),
+
+  // 提示词市场
+  installMarketPrompt: (params) => ipcRenderer.invoke('prompts:market:install', params),
+  installMarketPromptForce: (params) => ipcRenderer.invoke('prompts:market:installForce', params),
+  listMarketInstalledPrompts: () => ipcRenderer.invoke('prompts:market:installed'),
+  updateMarketPrompt: (params) => ipcRenderer.invoke('prompts:market:update', params),
+
+  // 提示词标签
+  listPromptTags: () => ipcRenderer.invoke('promptTags:list'),
+  createPromptTag: ({ name, color }) => ipcRenderer.invoke('promptTags:create', name, color),
+  updatePromptTag: ({ tagId, updates }) => ipcRenderer.invoke('promptTags:update', tagId, updates),
+  deletePromptTag: (tagId) => ipcRenderer.invoke('promptTags:delete', tagId),
+  addTagToPrompt: ({ promptId, tagId }) => ipcRenderer.invoke('prompts:addTag', promptId, tagId),
+  removeTagFromPrompt: ({ promptId, tagId }) => ipcRenderer.invoke('prompts:removeTag', promptId, tagId),
+
+  // ========================================
+  // 收藏管理
+  // ========================================
+  addFavorite: ({ sessionId, note }) => ipcRenderer.invoke('favorite:add', { sessionId, note }),
+  removeFavorite: (sessionId) => ipcRenderer.invoke('favorite:remove', sessionId),
+  checkFavorite: (sessionId) => ipcRenderer.invoke('favorite:check', sessionId),
+  getAllFavorites: () => ipcRenderer.invoke('favorite:getAll'),
+  updateFavoriteNote: ({ sessionId, note }) => ipcRenderer.invoke('favorite:updateNote', { sessionId, note }),
+
+  // ========================================
+  // 消息队列管理
+  // ========================================
+  getQueue: (sessionUuid) => ipcRenderer.invoke('queue:list', sessionUuid),
+  addToQueue: ({ sessionUuid, content }) => ipcRenderer.invoke('queue:add', { sessionUuid, content }),
+  updateQueueItem: ({ id, content }) => ipcRenderer.invoke('queue:update', { id, content }),
+  deleteQueueItem: (id) => ipcRenderer.invoke('queue:delete', id),
+  clearQueue: (sessionUuid) => ipcRenderer.invoke('queue:clear', sessionUuid),
+  swapQueueOrder: ({ id1, id2 }) => ipcRenderer.invoke('queue:swap', { id1, id2 }),
+
+  // ========================================
+  // Terminal removed — Developer mode dropped
+  //startTerminal: (projectPath) => ipcRenderer.invoke('terminal:start', projectPath),
+  writeTerminal: (data) => ipcRenderer.send('terminal:write', data),
+  resizeTerminal: ({ cols, rows }) => ipcRenderer.send('terminal:resize', { cols, rows }),
+  killTerminal: () => ipcRenderer.invoke('terminal:kill'),
+  getTerminalStatus: () => ipcRenderer.invoke('terminal:status'),
+
+  // ========================================
+  // 活动会话管理（新版多终端支持）
+  // ========================================
+  // 会话生命周期
+  createActiveSession: (options) => ipcRenderer.invoke('activeSession:create', options),
+  closeActiveSession: (sessionId) => ipcRenderer.invoke('activeSession:close', sessionId),
+  disconnectActiveSession: (sessionId) => ipcRenderer.invoke('activeSession:disconnect', sessionId),
+  listActiveSessions: (includeHidden = true) => ipcRenderer.invoke('activeSession:list', includeHidden),
+  getActiveSession: (sessionId) => ipcRenderer.invoke('activeSession:get', sessionId),
+  getActiveSessionsByProject: (projectId) => ipcRenderer.invoke('activeSession:getByProject', projectId),
+
+  // 终端交互
+  writeActiveSession: ({ sessionId, data }) => ipcRenderer.send('activeSession:write', { sessionId, data }),
+  resizeActiveSession: ({ sessionId, cols, rows }) => ipcRenderer.send('activeSession:resize', { sessionId, cols, rows }),
+
+  // 会话状态
+  focusActiveSession: (sessionId) => ipcRenderer.invoke('activeSession:focus', sessionId),
+  getFocusedActiveSession: () => ipcRenderer.invoke('activeSession:getFocused'),
+  setActiveSessionVisible: ({ sessionId, visible }) => ipcRenderer.invoke('activeSession:setVisible', { sessionId, visible }),
+  getRunningSessionCount: () => ipcRenderer.invoke('activeSession:getRunningCount'),
+  getSessionLimits: () => ipcRenderer.invoke('activeSession:getSessionLimits'),
+  renameActiveSession: ({ sessionId, newTitle }) => ipcRenderer.invoke('activeSession:rename', { sessionId, newTitle }),
+
+  // ========================================
+  // 事件监听
+  // ========================================
+  onTerminalData: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('terminal:data', listener);
+    // 返回取消监听函数
+    return () => ipcRenderer.removeListener('terminal:data', listener);
+  },
+
+  onTerminalExit: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('terminal:exit', listener);
+    return () => ipcRenderer.removeListener('terminal:exit', listener);
+  },
+
+  onTerminalError: (callback) => {
+    const listener = (event, error) => callback(error);
+    ipcRenderer.on('terminal:error', listener);
+    return () => ipcRenderer.removeListener('terminal:error', listener);
+  },
+
+  // 活动会话事件
+  onSessionData: (callback) => {
+    const listener = (event, { sessionId, data }) => callback({ sessionId, data });
+    ipcRenderer.on('session:data', listener);
+    return () => ipcRenderer.removeListener('session:data', listener);
+  },
+
+  onSessionStarted: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('session:started', listener);
+    return () => ipcRenderer.removeListener('session:started', listener);
+  },
+
+  onSessionExit: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('session:exit', listener);
+    return () => ipcRenderer.removeListener('session:exit', listener);
+  },
+
+  onSessionError: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('session:error', listener);
+    return () => ipcRenderer.removeListener('session:error', listener);
+  },
+
+  onSessionUpdated: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('session:updated', listener);
+    return () => ipcRenderer.removeListener('session:updated', listener);
+  },
+
+  // ========================================
+  // 设置广播（跨窗口同步）
+  // ========================================
+  broadcastSettings: (settings) => ipcRenderer.send('settings:broadcast', settings),
+
+  onSettingsChanged: (callback) => {
+    const listener = (event, settings) => callback(settings);
+    ipcRenderer.on('settings:changed', listener);
+    return () => ipcRenderer.removeListener('settings:changed', listener);
+  },
+
+  // ========================================
+  // 设置页切换（子窗口主动通知）
+  // ========================================
+  onSwitchSettingsTab: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('settings:switchTab', listener);
+    return () => ipcRenderer.removeListener('settings:switchTab', listener);
+  },
+
+  // ========================================
+  // 会话文件监控
+  // ========================================
+  watchSessionFiles: ({ projectPath, projectId }) => ipcRenderer.invoke('sessionWatcher:watch', { projectPath, projectId }),
+  stopWatchingSessionFiles: () => ipcRenderer.invoke('sessionWatcher:stop'),
+
+  onSessionFileChanged: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('session:fileChanged', listener);
+    return () => ipcRenderer.removeListener('session:fileChanged', listener);
+  },
+
+  // ========================================
+  // Agent 会话管理
+  // ========================================
+  // 生命周期
+  createAgentSession: (options) => ipcRenderer.invoke('agent:create', options),
+  sendAgentMessage: ({ sessionId, message, model, modelTier, maxTurns, providerId }) => ipcRenderer.invoke('agent:sendMessage', { sessionId, message, model, modelTier, maxTurns, providerId }),
+  uploadAgentAttachment: async ({ sessionId, cwd, file }) => {
+    const sourcePath = getPathForFileSafe(file)
+    const contentBase64 = sourcePath ? '' : await readFileAsBase64Payload(file)
+    return ipcRenderer.invoke('agent:uploadAttachment', {
+      sessionId,
+      cwd,
+      payload: {
+        name: file?.name || '',
+        mimeType: file?.type || '',
+        sizeBytes: file?.size || 0,
+        sourcePath,
+        contentBase64
+      }
+    })
+  },
+  cancelAgentGeneration: (sessionId) => ipcRenderer.invoke('agent:cancel', sessionId),
+  closeAgentSession: (sessionId) => ipcRenderer.invoke('agent:close', sessionId),
+  switchAgentApiProfile: ({ sessionId, profileId }) => ipcRenderer.invoke('agent:switchApiProfile', { sessionId, profileId }),
+  reopenAgentSession: (sessionId) => ipcRenderer.invoke('agent:reopen', sessionId),
+  getAgentSession: (sessionId) => ipcRenderer.invoke('agent:get', sessionId),
+  listAgentSessions: () => ipcRenderer.invoke('agent:list'),
+  renameAgentSession: ({ sessionId, title }) => ipcRenderer.invoke('agent:rename', { sessionId, title }),
+
+  // 定时任务
+  listScheduledTasks: () => ipcRenderer.invoke('scheduled-task:list'),
+  createScheduledTask: (task) => ipcRenderer.invoke('scheduled-task:create', task),
+  updateScheduledTask: ({ taskId, updates }) => ipcRenderer.invoke('scheduled-task:update', { taskId, updates }),
+  deleteScheduledTask: (taskId) => ipcRenderer.invoke('scheduled-task:delete', taskId),
+  runScheduledTaskNow: (taskId) => ipcRenderer.invoke('scheduled-task:runNow', taskId),
+  listScheduledTaskRuns: ({ taskId, limit }) => ipcRenderer.invoke('scheduled-task:listRuns', { taskId, limit }),
+
+  // 消息历史
+  getAgentMessages: (sessionId) => ipcRenderer.invoke('agent:getMessages', sessionId),
+  deleteAgentConversation: (sessionId) => ipcRenderer.invoke('agent:deleteConversation', sessionId),
+  compactAgentConversation: (sessionId) => ipcRenderer.invoke('agent:compact', sessionId),
+  clearAndRecreateAgentSession: ({ sessionId, overrides }) => ipcRenderer.invoke('agent:clearAndRecreate', { sessionId, overrides }),
+
+  // 队列持久化
+  saveAgentQueue: ({ sessionId, queue }) => ipcRenderer.invoke('agent:saveQueue', { sessionId, queue }),
+  getAgentQueue: (sessionId) => ipcRenderer.invoke('agent:getQueue', sessionId),
+
+  // 宿主交互（AskUserQuestion 等）
+  respondAgentInteraction: ({ sessionId, interactionId, answers, questions, annotations, updatedInput, updatedPermissions, decisionClassification, behavior }) =>
+    ipcRenderer.invoke('agent:respondInteraction', { sessionId, interactionId, answers, questions, annotations, updatedInput, updatedPermissions, decisionClassification, behavior }),
+  cancelAgentInteraction: ({ sessionId, interactionId, reason }) =>
+    ipcRenderer.invoke('agent:cancelInteraction', { sessionId, interactionId, reason }),
+
+  // Streaming Input 控制方法
+  setAgentModel: (sessionId, model, providerId) => ipcRenderer.invoke('agent:setModel', { sessionId, model, providerId }),
+  getAgentSupportedModels: (sessionId) => ipcRenderer.invoke('agent:getSupportedModels', sessionId),
+  getAgentSupportedCommands: (sessionId) => ipcRenderer.invoke('agent:getSupportedCommands', sessionId),
+  getAgentAccountInfo: (sessionId) => ipcRenderer.invoke('agent:getAccountInfo', sessionId),
+  getAgentMcpServerStatus: (sessionId) => ipcRenderer.invoke('agent:getMcpServerStatus', sessionId),
+  getAgentInitResult: (sessionId) => ipcRenderer.invoke('agent:getInitResult', sessionId),
+
+  // 成果目录
+  getAgentOutputDir: (sessionId) => ipcRenderer.invoke('agent:getOutputDir', sessionId),
+  openAgentOutputDir: (sessionId) => ipcRenderer.invoke('agent:openOutputDir', sessionId),
+  listAgentOutputFiles: (sessionId) => ipcRenderer.invoke('agent:listOutputFiles', sessionId),
+  listGeneratedReports: ({ mode } = {}) => ipcRenderer.invoke('agent:listGeneratedReports', { mode }),
+  hideGeneratedReport: ({ mode, filePath } = {}) => ipcRenderer.invoke('agent:hideGeneratedReport', { mode, filePath }),
+
+  // 文件浏览（AgentRightPanel）
+  listProjectDir: ({ rootPath, relativePath, showHidden }) => ipcRenderer.invoke('project:listDir', { rootPath, relativePath, showHidden }),
+  readProjectFile: ({ rootPath, relativePath }) => ipcRenderer.invoke('project:readFile', { rootPath, relativePath }),
+  readOfficeFile: ({ filePath, ext }) => ipcRenderer.invoke('project:readOfficeFile', { filePath, ext }),
+  saveProjectFile: ({ rootPath, relativePath, content }) => ipcRenderer.invoke('project:saveFile', { rootPath, relativePath, content }),
+  createProjectFile: ({ rootPath, parentPath, name, isDirectory }) => ipcRenderer.invoke('project:createFile', { rootPath, parentPath, name, isDirectory }),
+  renameProjectFile: ({ rootPath, oldPath, newName }) => ipcRenderer.invoke('project:renameFile', { rootPath, oldPath, newName }),
+  deleteProjectFile: ({ rootPath, path }) => ipcRenderer.invoke('project:deleteFile', { rootPath, path }),
+  searchProjectFiles: ({ rootPath, keyword, showHidden }) => ipcRenderer.invoke('project:searchFiles', { rootPath, keyword, showHidden }),
+
+  listAgentDir: ({ sessionId, relativePath, showHidden }) =>
+    ipcRenderer.invoke('agent:listDir', { sessionId, relativePath, showHidden }),
+  readAgentFile: ({ sessionId, relativePath }) =>
+    ipcRenderer.invoke('agent:readFile', { sessionId, relativePath }),
+  saveAgentFile: ({ sessionId, relativePath, content }) =>
+    ipcRenderer.invoke('agent:saveFile', { sessionId, relativePath, content }),
+  saveAbsoluteFile: ({ filePath, content }) =>
+    ipcRenderer.invoke('agent:saveAbsoluteFile', { filePath, content }),
+  openAgentFile: ({ sessionId, relativePath }) =>
+    ipcRenderer.invoke('agent:openFile', { sessionId, relativePath }),
+  readReportText: ({ filePath, sessionId, maxChars } = {}) =>
+    ipcRenderer.invoke('agent:readReportText', { filePath, sessionId, maxChars }),
+  readAbsolutePath: ({ filePath, sessionId, confirmed }) =>
+    ipcRenderer.invoke('agent:readAbsolutePath', { filePath, sessionId, confirmed }),
+  createAgentFile: ({ sessionId, parentPath, name, isDirectory }) =>
+    ipcRenderer.invoke('agent:createFile', { sessionId, parentPath, name, isDirectory }),
+  renameAgentFile: ({ sessionId, oldPath, newName }) =>
+    ipcRenderer.invoke('agent:renameFile', { sessionId, oldPath, newName }),
+  deleteAgentFile: ({ sessionId, path }) =>
+    ipcRenderer.invoke('agent:deleteFile', { sessionId, path }),
+  searchAgentFiles: ({ sessionId, keyword, showHidden }) =>
+    ipcRenderer.invoke('agent:searchFiles', { sessionId, keyword, showHidden }),
+
+  // 能力管理（Agent 模式）
+  fetchCapabilities: (projectPath) => ipcRenderer.invoke('capabilities:fetch', projectPath),
+  installCapability: (id, capability, options) => ipcRenderer.invoke('capabilities:install', id, capability, options),
+  uninstallCapability: (id, capability) => ipcRenderer.invoke('capabilities:uninstall', id, capability),
+  enableCapability: (id, capability, sessionId) => ipcRenderer.invoke('capabilities:enable', id, capability, sessionId),
+  disableCapability: (id, capability, sessionId) => ipcRenderer.invoke('capabilities:disable', id, capability, sessionId),
+  toggleComponentDisabled: (type, id, disabled) => ipcRenderer.invoke('capabilities:toggleComponent', type, id, disabled),
+  checkCapabilityInstalled: (type, id, projectPath) => ipcRenderer.invoke('capabilities:checkInstalled', type, id, projectPath),
+  getCapabilitiesUpdateStatus: () => ipcRenderer.invoke('capabilities:getUpdateStatus'),
+  clearCapabilitiesUpdateBadge: () => ipcRenderer.invoke('capabilities:clearUpdateBadge'),
+  checkComponentsBatchStatus: (components) => ipcRenderer.invoke('capabilities:checkBatchStatus', components),
+  onCapabilitiesUpdateAvailable: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('capabilities-update-available', listener)
+    return () => ipcRenderer.removeListener('capabilities-update-available', listener)
+  },
+
+  // ========================================
+  // 应用更新
+  // ========================================
+  checkForUpdates: (silent = false) => ipcRenderer.invoke('update:check', silent),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  quitAndInstall: () => ipcRenderer.invoke('update:quitAndInstall'),
+  getAppVersion: () => ipcRenderer.invoke('update:getVersion'),
+  getUpdateStatus: () => ipcRenderer.invoke('update:getStatus'),
+
+  // 清除所有数据
+  clearAllData: () => ipcRenderer.invoke('app:clearAllData'),
+
+  // 更新事件监听
+  onUpdateChecking: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-checking', listener);
+    return () => ipcRenderer.removeListener('update-checking', listener);
+  },
+  onUpdateAvailable: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-available', listener);
+    return () => ipcRenderer.removeListener('update-available', listener);
+  },
+  onUpdateNotAvailable: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-not-available', listener);
+    return () => ipcRenderer.removeListener('update-not-available', listener);
+  },
+  onUpdateDownloadProgress: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-download-progress', listener);
+    return () => ipcRenderer.removeListener('update-download-progress', listener);
+  },
+  onUpdateDownloaded: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-downloaded', listener);
+    return () => ipcRenderer.removeListener('update-downloaded', listener);
+  },
+  onUpdateError: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-error', listener);
+    return () => ipcRenderer.removeListener('update-error', listener);
+  },
+  onUpdateNeedRedownload: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-need-redownload', listener);
+    return () => ipcRenderer.removeListener('update-need-redownload', listener);
+  },
+  onUpdateInstallFailed: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-install-failed', listener);
+    return () => ipcRenderer.removeListener('update-install-failed', listener);
+  },
+  getInstallError: () => ipcRenderer.invoke('update:getInstallError'),
+
+  // ========================================
+  // 钉钉桥接
+  // ========================================
+  getDingTalkStatus: () => ipcRenderer.invoke('dingtalk:getStatus'),
+  startDingTalk: () => ipcRenderer.invoke('dingtalk:start'),
+  stopDingTalk: () => ipcRenderer.invoke('dingtalk:stop'),
+  restartDingTalk: () => ipcRenderer.invoke('dingtalk:restart'),
+  updateDingTalkConfig: (config) => ipcRenderer.invoke('dingtalk:updateConfig', config),
+
+  // 钉钉事件监听
+  onDingTalkStatusChange: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('dingtalk:statusChange', listener);
+    return () => ipcRenderer.removeListener('dingtalk:statusChange', listener);
+  },
+  onDingTalkError: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('dingtalk:error', listener);
+    return () => ipcRenderer.removeListener('dingtalk:error', listener);
+  },
+  onDingTalkMessageReceived: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('dingtalk:messageReceived', listener);
+    return () => ipcRenderer.removeListener('dingtalk:messageReceived', listener);
+  },
+  onDingTalkSessionCreated: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('dingtalk:sessionCreated', listener);
+    return () => ipcRenderer.removeListener('dingtalk:sessionCreated', listener);
+  },
+  onDingTalkSessionClosed: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('dingtalk:sessionClosed', listener);
+    return () => ipcRenderer.removeListener('dingtalk:sessionClosed', listener);
+  },
+  onWeixinMessageReceived: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('weixin:messageReceived', listener);
+    return () => ipcRenderer.removeListener('weixin:messageReceived', listener);
+  },
+  onWeixinSessionCreated: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('weixin:sessionCreated', listener);
+    return () => ipcRenderer.removeListener('weixin:sessionCreated', listener);
+  },
+
+  // ========================================
+  // 飞书桥接
+  // ========================================
+  getFeishuStatus: () => ipcRenderer.invoke('feishu:getStatus'),
+  startFeishu: () => ipcRenderer.invoke('feishu:start'),
+  stopFeishu: () => ipcRenderer.invoke('feishu:stop'),
+  restartFeishu: () => ipcRenderer.invoke('feishu:restart'),
+  updateFeishuConfig: (config) => ipcRenderer.invoke('feishu:updateConfig', config),
+
+  // 飞书事件监听
+  onFeishuStatusChange: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('feishu:statusChange', listener);
+    return () => ipcRenderer.removeListener('feishu:statusChange', listener);
+  },
+  onFeishuError: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('feishu:error', listener);
+    return () => ipcRenderer.removeListener('feishu:error', listener);
+  },
+  onFeishuMessageReceived: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('feishu:messageReceived', listener);
+    return () => ipcRenderer.removeListener('feishu:messageReceived', listener);
+  },
+  onFeishuSessionCreated: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('feishu:sessionCreated', listener);
+    return () => ipcRenderer.removeListener('feishu:sessionCreated', listener);
+  },
+
+  onScheduledTaskChanged: (callback) => {
+    const listener = (event, data) => callback(data)
+    ipcRenderer.on('scheduled-task:changed', listener)
+    return () => ipcRenderer.removeListener('scheduled-task:changed', listener)
+  },
+
+  // Agent 事件监听（main → renderer 推送）
+  // 使用工厂模式精简重复的监听器注册
+  ...Object.fromEntries(
+    [
+      ['onAgentInit', 'agent:init'],
+      ['onAgentMessage', 'agent:message'],
+      ['onAgentStream', 'agent:stream'],
+      ['onAgentResult', 'agent:result'],
+      ['onAgentError', 'agent:error'],
+      ['onAgentCliError', 'agent:cliError'],
+      ['onAgentStatusChange', 'agent:statusChange'],
+      ['onAgentToolProgress', 'agent:toolProgress'],
+      ['onAgentSystemStatus', 'agent:systemStatus'],
+      ['onAgentOtherMessage', 'agent:otherMessage'],
+      ['onAgentRenamed', 'agent:renamed'],
+      ['onAgentCompacted', 'agent:compacted'],
+      ['onAgentUsage', 'agent:usage'],
+      ['onAgentInteractionRequest', 'agent:interactionRequest'],
+      ['onAgentInteractionResolved', 'agent:interactionResolved'],
+      ['onAgentAllSessionsClosed', 'agent:allSessionsClosed']
+    ].map(([apiName, channel]) => [
+      apiName,
+      (callback) => {
+        const listener = (event, data) => callback(data);
+        ipcRenderer.on(channel, listener);
+        return () => ipcRenderer.removeListener(channel, listener);
+      }
+    ])
+  ),
+
+  // ========================================
+  // Background Tasks
+  // ========================================
+  getBackgroundTasks: () => ipcRenderer.invoke('background-tasks:getAll'),
+  getRunningBackgroundTasks: () => ipcRenderer.invoke('background-tasks:getRunning'),
+  cancelBackgroundTask: (taskId) => ipcRenderer.invoke('background-tasks:cancel', taskId),
+  clearCompletedBackgroundTasks: () => ipcRenderer.invoke('background-tasks:clearCompleted'),
+
+  onBackgroundTasksUpdate: (callback) => {
+    const listener = (event, tasks) => callback(tasks);
+    ipcRenderer.on('background-tasks:update', listener);
+    return () => ipcRenderer.removeListener('background-tasks:update', listener);
+  },
+
+  // ========================================
+  // Notebook 管理
+  // ========================================
+  notebookCreate: (options) => ipcRenderer.invoke('notebook:create', options),
+  notebookList: () => ipcRenderer.invoke('notebook:list'),
+  notebookGet: (id) => ipcRenderer.invoke('notebook:get', id),
+  notebookRename: ({ id, name }) => ipcRenderer.invoke('notebook:rename', { id, name }),
+  notebookDelete: (id) => ipcRenderer.invoke('notebook:delete', id),
+  notebookBindSession: ({ id, sessionId }) => ipcRenderer.invoke('notebook:bindSession', { id, sessionId }),
+  notebookUpdateApiProfile: ({ id, apiProfileId }) => ipcRenderer.invoke('notebook:updateApiProfile', { id, apiProfileId }),
+  notebookUpdateSelectedModel: ({ id, lastSelectedModelId }) => ipcRenderer.invoke('notebook:updateSelectedModel', { id, lastSelectedModelId }),
+  notebookRestartSession: (id) => ipcRenderer.invoke('notebook:restartSession', id),
+  notebookListSources: (notebookId) => ipcRenderer.invoke('notebook:listSources', notebookId),
+  notebookAddSource: ({ notebookId, sourceData }) => ipcRenderer.invoke('notebook:addSource', { notebookId, sourceData }),
+  notebookImportFiles: ({ notebookId, filePaths }) => ipcRenderer.invoke('notebook:importFiles', { notebookId, filePaths }),
+  notebookUpdateSource: ({ notebookId, sourceId, updates }) => ipcRenderer.invoke('notebook:updateSource', { notebookId, sourceId, updates }),
+  notebookDeleteSource: ({ notebookId, sourceId }) => ipcRenderer.invoke('notebook:deleteSource', { notebookId, sourceId }),
+  notebookDeleteSources: ({ notebookId, sourceIds }) => ipcRenderer.invoke('notebook:deleteSources', { notebookId, sourceIds }),
+  notebookListAchievements: (notebookId) => ipcRenderer.invoke('notebook:listAchievements', notebookId),
+  notebookAddAchievement: ({ notebookId, achievementData }) => ipcRenderer.invoke('notebook:addAchievement', { notebookId, achievementData }),
+  notebookUpdateAchievement: ({ notebookId, achievementId, updates }) => ipcRenderer.invoke('notebook:updateAchievement', { notebookId, achievementId, updates }),
+  notebookDeleteAchievement: ({ notebookId, achievementId }) => ipcRenderer.invoke('notebook:deleteAchievement', { notebookId, achievementId }),
+  notebookDeleteAchievements: ({ notebookId, achievementIds }) => ipcRenderer.invoke('notebook:deleteAchievements', { notebookId, achievementIds }),
+  notebookAddAchievementToSource: ({ notebookId, achievementId }) => ipcRenderer.invoke('notebook:addAchievementToSource', { notebookId, achievementId }),
+  notebookExportAchievement: ({ notebookId, achievementId, targetDir }) => ipcRenderer.invoke('notebook:exportAchievement', { notebookId, achievementId, targetDir }),
+  notebookReadFileContent: ({ notebookId, relPath }) => ipcRenderer.invoke('notebook:readFileContent', { notebookId, relPath }),
+  notebookWriteFileContent: ({ notebookId, relPath, content }) => ipcRenderer.invoke('notebook:writeFileContent', { notebookId, relPath, content }),
+  notebookCopyImageToClipboard: ({ dataUrl }) => ipcRenderer.invoke('notebook:copyImageToClipboard', { dataUrl }),
+  notebookSaveChatImageToSource: ({ notebookId, filename, dataUrl }) => ipcRenderer.invoke('notebook:saveChatImageToSource', { notebookId, filename, dataUrl }),
+  notebookSaveChatImageToAchievement: ({ notebookId, filename, dataUrl, sourceIds }) => ipcRenderer.invoke('notebook:saveChatImageToAchievement', { notebookId, filename, dataUrl, sourceIds }),
+  notebookSaveChatMarkdownToSource: ({ notebookId, filename, content }) => ipcRenderer.invoke('notebook:saveChatMarkdownToSource', { notebookId, filename, content }),
+  notebookSaveChatMarkdownToAchievement: ({ notebookId, filename, content, sourceIds }) => ipcRenderer.invoke('notebook:saveChatMarkdownToAchievement', { notebookId, filename, content, sourceIds }),
+  notebookFinalizeAchievementText: ({ notebookId, achievementId, content, sourceIds }) => ipcRenderer.invoke('notebook:finalizeAchievementText', { notebookId, achievementId, content, sourceIds }),
+  notebookSetCopySourceFiles: ({ notebookId, value }) => ipcRenderer.invoke('notebook:setCopySourceFiles', { notebookId, value }),
+  notebookSanitizeIndexes: (notebookId) => ipcRenderer.invoke('notebook:sanitizeIndexes', notebookId),
+  notebookAddPathToSource: ({ notebookId, filePath, preferredName }) => ipcRenderer.invoke('notebook:addPathToSource', { notebookId, filePath, preferredName }),
+  notebookAddPathToAchievement: ({ notebookId, filePath, preferredName }) => ipcRenderer.invoke('notebook:addPathToAchievement', { notebookId, filePath, preferredName }),
+  notebookExportSource: ({ notebookId, sourceId, targetDir }) => ipcRenderer.invoke('notebook:exportSource', { notebookId, sourceId, targetDir }),
+
+  // Notebook Tools
+  notebookListTools: () => ipcRenderer.invoke('notebook:listTools'),
+  notebookUpdateTool: ({ toolId, updates }) => ipcRenderer.invoke('notebook:updateTool', { toolId, updates }),
+  notebookAddTool: (toolData) => ipcRenderer.invoke('notebook:addTool', toolData),
+  notebookDeleteTool: (toolId) => ipcRenderer.invoke('notebook:deleteTool', toolId),
+  notebookFetchRemoteTools: () => ipcRenderer.invoke('notebook:fetchRemoteTools'),
+  notebookFetchPromptTemplateContent: (marketId) => ipcRenderer.invoke('notebook:fetchPromptTemplateContent', marketId),
+
+  // Notebook Generation
+  notebookPrepareGeneration: ({ notebookId, toolId, sourceIds, expectedRelPath }) => ipcRenderer.invoke('notebook:prepareGeneration', { notebookId, toolId, sourceIds, expectedRelPath }),
+  notebookPreviewGeneration: ({ notebookId, toolId, sourceIds }) => ipcRenderer.invoke('notebook:previewGeneration', { notebookId, toolId, sourceIds }),
+
+  // Notebook Install
+  notebookInstallTool: ({ tool, options }) => ipcRenderer.invoke('notebook:installTool', { tool, options }),
+  notebookUninstallTool: (toolId) => ipcRenderer.invoke('notebook:uninstallTool', toolId)
+  })
+;
+
+console.log('[Preload] ElectronAPI exposed to renderer successfully');

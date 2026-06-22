@@ -1,0 +1,120 @@
+/**
+ * Capability Management IPC Handlers
+ * 处理 Agent 模式能力管理相关的 IPC 通信
+ */
+
+function setupCapabilityHandlers(ipcMain, capabilityManager, agentSessionManager) {
+  if (!capabilityManager) {
+    console.warn('[IPC] CapabilityManager not available, skipping capability handlers')
+    return
+  }
+
+  // 拉取远程能力清单（含组件安装状态检测）
+  ipcMain.handle('capabilities:fetch', async (event, projectPath) => {
+    try {
+      return await capabilityManager.fetchCapabilities(projectPath)
+    } catch (err) {
+      console.error('[IPC] capabilities:fetch error:', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // 安装能力（从 registry 下载组件）
+  ipcMain.handle('capabilities:install', async (event, _id, capability, options) => {
+    try {
+      if (!capability) return { success: false, error: 'Invalid parameters' }
+      return await capabilityManager.installCapability(capability, options)
+    } catch (err) {
+      console.error('[IPC] capabilities:install error:', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // 卸载能力（删除组件文件）
+  ipcMain.handle('capabilities:uninstall', async (event, _id, capability) => {
+    try {
+      if (!capability) return { success: false, error: 'Invalid parameters' }
+      return await capabilityManager.uninstallCapability(capability)
+    } catch (err) {
+      console.error('[IPC] capabilities:uninstall error:', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // 启用能力（MCP 走 SDK toggleMcpServer，其他走文件重命名）
+  ipcMain.handle('capabilities:enable', async (event, _id, capability, sessionId) => {
+    try {
+      if (!capability) return { success: false, error: 'Invalid parameters' }
+      if (capability.type === 'mcp') {
+        if (!agentSessionManager) return { success: false, error: 'AgentSessionManager not available' }
+        if (!sessionId) return { success: false, error: 'No active session to enable MCP' }
+        return await agentSessionManager.toggleMcp(sessionId, capability.componentId, true)
+      }
+      return await capabilityManager.enableCapability(capability)
+    } catch (err) {
+      console.error('[IPC] capabilities:enable error:', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // 禁用能力（MCP 走 SDK toggleMcpServer，其他走文件重命名）
+  ipcMain.handle('capabilities:disable', async (event, _id, capability, sessionId) => {
+    try {
+      if (!capability) return { success: false, error: 'Invalid parameters' }
+      if (capability.type === 'mcp') {
+        if (!agentSessionManager) return { success: false, error: 'AgentSessionManager not available' }
+        if (!sessionId) return { success: false, error: 'No active session to disable MCP' }
+        return await agentSessionManager.toggleMcp(sessionId, capability.componentId, false)
+      }
+      return await capabilityManager.disableCapability(capability)
+    } catch (err) {
+      console.error('[IPC] capabilities:disable error:', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // 切换单个组件的禁用状态（Developer 模式）
+  ipcMain.handle('capabilities:toggleComponent', async (event, type, id, disabled) => {
+    try {
+      if (!type || !id) return { success: false, error: 'Invalid parameters' }
+      return await capabilityManager.toggleComponentDisabled(type, id, disabled)
+    } catch (err) {
+      console.error('[IPC] capabilities:toggleComponent error:', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // 获取能力清单更新状态
+  ipcMain.handle('capabilities:getUpdateStatus', () => {
+    return capabilityManager.getUpdateStatus()
+  })
+
+  // 清除更新徽章
+  ipcMain.handle('capabilities:clearUpdateBadge', () => {
+    capabilityManager.clearUpdateBadge()
+    return { cleared: true }
+  })
+
+  ipcMain.handle('capabilities:checkInstalled', async (_e, type, id, projectPath) => {
+    try {
+      if (!type || !id) return false
+      return capabilityManager.checkComponentInstalled(type, id, projectPath)
+    } catch (err) {
+      console.error('[IPC] capabilities:checkInstalled error:', err)
+      return false
+    }
+  })
+
+  ipcMain.handle('capabilities:checkBatchStatus', async (_e, components) => {
+    try {
+      return capabilityManager.checkComponentsBatch(components)
+    } catch (err) {
+      console.error('[IPC] capabilities:checkBatchStatus error:', err)
+      return {}
+    }
+  })
+
+  console.log('[IPC] Capability handlers registered')
+}
+
+module.exports = { setupCapabilityHandlers }

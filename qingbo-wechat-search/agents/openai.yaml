@@ -1,0 +1,4 @@
+interface:
+  display_name: "Qingbo WeChat Search"
+  short_description: "Search bundled WeChat public accounts through Qingbo API"
+  default_prompt: "Search the bundled WeChat public-account list for my keywords and export matched articles plus account status."

@@ -1,0 +1,306 @@
+.jedi-markdown-preview {
+  color: var(--text-color);
+  font-size: 14px;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+}
+
+.jedi-markdown-preview h1,
+.jedi-markdown-preview h2,
+.jedi-markdown-preview h3,
+.jedi-markdown-preview h4,
+.jedi-markdown-preview h5,
+.jedi-markdown-preview h6 {
+  color: var(--text-color);
+  line-height: 1.35;
+}
+
+.jedi-markdown-preview h1 {
+  font-size: 1.45em;
+  font-weight: 700;
+  margin: 0.35em 0 0.45em;
+}
+
+.jedi-markdown-preview h2 {
+  font-size: 1.22em;
+  font-weight: 700;
+  margin: 0.9em 0 0.4em;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
+}
+
+.jedi-markdown-preview h3 {
+  font-size: 1.08em;
+  font-weight: 600;
+  margin: 0.75em 0 0.35em;
+}
+
+.jedi-markdown-preview h4,
+.jedi-markdown-preview h5,
+.jedi-markdown-preview h6 {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 1.15em 0 0.45em;
+}
+
+.jedi-markdown-preview h4 {
+  position: relative;
+  padding: 7px 10px 7px 12px;
+}
+
+.jedi-markdown-preview h4::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 4px 0 0 4px;
+  background: var(--primary-color);
+}
+
+.jedi-markdown-preview p {
+  margin: 0.5em 0;
+}
+
+.jedi-markdown-preview blockquote {
+  margin: 0.6em 0;
+  padding: 6px 14px;
+  border-left: 4px solid var(--primary-color);
+  background: var(--bg-color-tertiary);
+  border-radius: 0 4px 4px 0;
+  color: var(--text-color-secondary);
+}
+
+.jedi-markdown-preview ul,
+.jedi-markdown-preview ol {
+  margin: 0.55em 0 0.8em;
+  padding-left: 2em;
+}
+
+.jedi-markdown-preview li {
+  margin: 0.28em 0;
+}
+
+.jedi-markdown-preview h4 + ul,
+.jedi-markdown-preview h4 + ol {
+  margin-top: 0.4em;
+}
+
+.jedi-markdown-preview .project-lead-title {
+  margin: 32px 0 14px;
+  padding: 7px 10px 7px 12px;
+  border-left: 4px solid var(--primary-color);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--primary-color) 6%, transparent);
+  color: var(--text-color);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.jedi-markdown-preview a {
+  color: var(--primary-color);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.jedi-markdown-preview a:hover {
+  text-decoration: underline;
+}
+
+.jedi-markdown-preview hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 1em 0;
+}
+
+.jedi-markdown-preview table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  font-size: 13px;
+}
+
+.jedi-markdown-preview th,
+.jedi-markdown-preview td {
+  border: 1px solid var(--border-color);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-break: anywhere;
+}
+
+.jedi-markdown-preview th {
+  background: var(--bg-color-tertiary);
+  font-weight: 600;
+}
+
+.jedi-markdown-preview tr:nth-child(even) {
+  background: var(--bg-color-secondary);
+}
+
+.jedi-markdown-preview .investment-leads-summary-table th:nth-child(1),
+.jedi-markdown-preview .investment-leads-summary-table td:nth-child(1),
+.jedi-markdown-preview .investment-leads-summary-table th:nth-child(3),
+.jedi-markdown-preview .investment-leads-summary-table td:nth-child(3) {
+  width: 80px;
+}
+
+.jedi-markdown-preview .investment-leads-summary-table th:nth-child(6),
+.jedi-markdown-preview .investment-leads-summary-table td:nth-child(6) {
+  width: 34%;
+}
+
+.jedi-markdown-preview .investment-leads-summary-table th:nth-child(1),
+.jedi-markdown-preview .investment-leads-summary-table td:nth-child(1) {
+  text-align: center;
+}
+
+.jedi-markdown-preview img {
+  max-width: 100%;
+  border-radius: 4px;
+  margin: 0.5em 0;
+}
+
+.jedi-markdown-preview pre:not(.hljs) {
+  background: var(--bg-color-tertiary);
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.7em 0;
+  font-size: 13px;
+}
+
+.jedi-markdown-preview code {
+  font-family: Consolas, Monaco, monospace;
+}
+
+.jedi-markdown-preview code:not(pre code) {
+  background: var(--bg-color-tertiary);
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.jedi-markdown-preview .hljs-code-wrapper {
+  margin: 0.7em 0;
+  font-size: 13px;
+}
+
+.jedi-markdown-preview .field-card {
+  width: 100%;
+  margin: 10px 0 14px;
+  font-size: 14px;
+}
+
+.jedi-markdown-preview .field-card-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 28%) minmax(0, 1fr);
+  min-height: 34px;
+}
+
+.jedi-markdown-preview .field-card-label,
+.jedi-markdown-preview .field-card-value {
+  min-width: 0;
+  padding: 6px 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.jedi-markdown-preview .field-card-label {
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.jedi-markdown-preview .field-card-value {
+  color: var(--text-color);
+}
+
+.jedi-markdown-preview .source-reference-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-right: 14px;
+  color: var(--text-color);
+  text-decoration: none;
+  border-bottom: none;
+  vertical-align: baseline;
+}
+
+.jedi-markdown-preview .source-reference-chip:hover {
+  color: var(--primary-color);
+  text-decoration: none;
+  border-bottom: none;
+}
+
+.jedi-markdown-preview .source-reference-name {
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jedi-markdown-preview .source-reference-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-color-secondary);
+  vertical-align: text-bottom;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.jedi-markdown-preview .source-reference-link svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.jedi-markdown-preview .source-reference-chip:hover .source-reference-link {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: var(--bg-color-tertiary);
+}
+
+.jedi-markdown-preview .source-reference-chip-disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.jedi-markdown-preview .field-card-value br:first-child,
+.jedi-markdown-preview .field-card-value br:last-child {
+  display: none;
+}
+
+.jedi-markdown-preview .markdown-error {
+  color: var(--error-color);
+}
+
+@media (max-width: 760px) {
+  .jedi-markdown-preview .field-card-row {
+    grid-template-columns: 1fr;
+  }
+
+  .jedi-markdown-preview .field-card-label {
+    padding-bottom: 2px;
+  }
+
+  .jedi-markdown-preview .field-card-value {
+    padding-top: 2px;
+  }
+}

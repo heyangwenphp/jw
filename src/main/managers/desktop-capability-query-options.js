@@ -1,0 +1,881 @@
+const { NotificationRouter } = require('./notification-router')
+
+const notificationRouterByWeixinService = new WeakMap()
+
+function getNotificationRouter({ weixinNotifyService, feishuBridge }) {
+  let router = notificationRouterByWeixinService.get(weixinNotifyService)
+  if (!router) {
+    router = new NotificationRouter({ weixinNotifyService, feishuBridge })
+    notificationRouterByWeixinService.set(weixinNotifyService, router)
+  } else {
+    router.weixinNotifyService = weixinNotifyService
+    router.feishuBridge = feishuBridge
+  }
+  return router
+}
+
+const DESKTOP_CAPABILITY_SYSTEM_PROMPT = [
+  'You can manage JediDesktop scheduled tasks with MCP tools.',
+  'You do have direct access to JediDesktop scheduled tasks through the JediDesktop MCP server in this session.',
+  'Do not say you cannot access JediDesktop scheduled tasks, and do not redirect the user to /schedule or the desktop UI when these tools can answer the request.',
+  'Do not substitute Claude Code built-in cron jobs for JediDesktop scheduled tasks unless the user explicitly asks about Claude Code cron jobs.',
+  'When the user asks to create, inspect, update, enable, disable, run, delete, or review scheduled task history, use these tools instead of telling the user to use /schedule.',
+  'Treat Chinese phrases like 定时任务, 计划任务, 定时执行, 每天, 每周, 每月, 间隔执行, 运行记录, 执行历史, 立即执行, 启用, 停用, 删除任务 as scheduled-task intents.',
+  'Use schedule_list for asking what tasks exist or when the target task is unclear.',
+  'Use schedule_get for one task details, current configuration, next run time, failure count, or last error.',
+  'Use schedule_runs for execution history, recent failures, skipped runs, trigger reason, or debugging why a task did not run.',
+  'Use schedule_run_now when the user wants to test, verify, trigger now, run once immediately, or 立即执行.',
+  'Use schedule_delete only when the user clearly asks to remove a task.',
+  'Before modifying or deleting an existing task, call schedule_list unless the user already provided an explicit task ID.',
+  'Do not claim there are no tasks, no history, or a task is disabled without calling the relevant tool first.',
+  'After any mutation or inspection, summarize the actual task state returned by the tool, especially enabled, nextRunAt, lastError, and failureCount.',
+  'When presenting model configuration to the user, use the actual modelId returned by the tool.',
+  'If modelId is empty, say the task follows the selected API profile default model instead of inventing tier names.'
+].join(' ')
+
+const CONFLICTING_CRON_TOOLS = [
+  'CronList',
+  'CronCreate',
+  'CronUpdate',
+  'CronDelete',
+  'cronList',
+  'cronCreate',
+  'cronUpdate',
+  'cronDelete'
+]
+const DESKTOP_CAPABILITY_SERVER_NAME = 'JediDesktop'
+const DESKTOP_CAPABILITY_TOOL_NAMES = [
+  'schedule_list',
+  'schedule_get',
+  'schedule_runs',
+  'schedule_create',
+  'schedule_update',
+  'schedule_enable',
+  'schedule_disable',
+  'schedule_run_now',
+  'schedule_delete'
+]
+const DESKTOP_CAPABILITY_ALLOWED_TOOLS = DESKTOP_CAPABILITY_TOOL_NAMES.map(
+  toolName => `mcp__${DESKTOP_CAPABILITY_SERVER_NAME}__${toolName}`
+)
+const WEIXIN_NOTIFY_TOOL_NAMES = [
+  'weixin_notify_list_targets',
+  'weixin_notify_send',
+  'notification_send'
+]
+const WEIXIN_NOTIFY_ALLOWED_TOOLS = WEIXIN_NOTIFY_TOOL_NAMES.map(
+  toolName => `mcp__${DESKTOP_CAPABILITY_SERVER_NAME}__${toolName}`
+)
+const COMPONENT_TOOL_NAMES = [
+  'jedi_component_create'
+]
+const COMPONENT_ALLOWED_TOOLS = COMPONENT_TOOL_NAMES.map(
+  toolName => `mcp__${DESKTOP_CAPABILITY_SERVER_NAME}__${toolName}`
+)
+
+const WEIXIN_NOTIFY_SYSTEM_PROMPT = [
+  'You can send Weixin notification messages through Jedi when the user explicitly asks to notify someone or when a scheduled task needs to report its result.',
+  'For scheduled task reports, prefer notification_send over weixin_notify_send because it sends to Weixin first and automatically falls back to Feishu when the Weixin session has expired.',
+  'Use weixin_notify_list_targets before sending unless the user already provided an exact targetKey from a previous weixin_notify_list_targets response.',
+  'Prefer human-readable target displayName values from weixin_notify_list_targets when the user names a recipient, but send with targetKey when it is available.',
+  'If a recipient name matches multiple targets or no target, ask the user to clarify instead of guessing.',
+  'Use weixin_notify_send only for short notification text to an already bound Weixin target.',
+  'Do not claim you can message arbitrary WeChat contacts. Jedi can only send to Weixin users who completed iLink QR authorization and have a captured sendable target.',
+  'After sending, report the recipient displayName and messageId returned by the tool.',
+  'When notification_send falls back to Feishu, mention that Weixin failed or is cooling down and that Feishu was used as the fallback.'
+].join(' ')
+
+const COMPONENT_CREATION_SYSTEM_PROMPT = [
+  'You can create Jedi user skills and agents with the MCP tool jedi_component_create.',
+  'When the user explicitly asks to create, save, add to my library, add to my custom skill, add to my custom agent, create a skill, create an agent, 创建 skill, 创建技能, 创建 agent, 创建智能体, 保存到我的 Skill, or 加入我的自定义, use jedi_component_create instead of writing .claude/skills, .codex/skills, .claude/agents, or .codex/agents files directly.',
+  'For type=skill, the content must be a standard Claude Code skill SKILL.md: start with YAML frontmatter delimited by --- lines, include name and description, use a lowercase hyphen-case name that matches the id, then include Markdown instructions after the frontmatter.',
+  'When the user is only brainstorming or asking for a draft, present the draft and ask before saving.',
+  'All components created by jedi_component_create are owned by the current user and private by default.',
+  'After jedi_component_create succeeds, tell the user only the component type and component id/name, for example "skill product-manager created". Do not include local filesystem paths, saved paths, file paths, or directory paths in the user-facing reply.',
+  'Do not claim the component is public or published unless a separate visibility change succeeds.'
+].join(' ')
+
+const DEFAULT_DAILY_TIME = '09:00'
+const SCHEDULE_TYPES = ['interval', 'daily', 'weekly', 'monthly', 'workdays', 'once']
+const MONTHLY_MODES = ['day_of_month', 'last_day']
+const INTERVAL_ANCHOR_MODES = ['started_at', 'finished_at']
+const UPDATE_FIELDS = [
+  'name',
+  'prompt',
+  'cwd',
+  'apiProfileId',
+  'modelId',
+  'maxRuns',
+  'resetCountOnEnable',
+  'intervalAnchorMode',
+  'enabled',
+  'scheduleType',
+  'intervalMinutes',
+  'weeklyDays',
+  'monthlyMode',
+  'monthlyDay',
+  'firstRunAt'
+]
+
+const DISPLAY_I18N = {
+  'zh-CN': {
+    statusEnabled: '启用',
+    statusDisabled: '停用',
+    nextRunUnscheduled: '未安排',
+    onceNotSet: '未设置',
+    defaultWorkspace: '默认工作目录',
+    scheduleDaily: (time) => `每天 ${time}`,
+    scheduleWeekly: (days, time) => `每周 ${days} ${time}`,
+    scheduleMonthly: (day, time) => `每月 ${day} 日 ${time}`,
+    scheduleMonthlyLastDay: (time) => `每月最后一天 ${time}`,
+    scheduleWorkdays: (time) => `工作日 ${time}`,
+    scheduleOnce: (time) => `单次 ${time}`,
+    scheduleInterval: (minutes) => `每隔 ${minutes} 分钟`,
+    summaryNextRun: (time) => `下次执行 ${time}`,
+    summaryModel: (label) => `模型 ${label}`,
+    summaryWorkingDirectory: (cwd) => `工作目录 ${cwd}`
+  },
+  'en-US': {
+    statusEnabled: 'Enabled',
+    statusDisabled: 'Disabled',
+    nextRunUnscheduled: 'Not scheduled',
+    onceNotSet: 'Not set',
+    defaultWorkspace: 'Default workspace',
+    scheduleDaily: (time) => `Daily ${time}`,
+    scheduleWeekly: (days, time) => `Weekly ${days} ${time}`,
+    scheduleMonthly: (day, time) => `Monthly on day ${day} at ${time}`,
+    scheduleMonthlyLastDay: (time) => `Monthly on the last day at ${time}`,
+    scheduleWorkdays: (time) => `Workdays ${time}`,
+    scheduleOnce: (time) => `Once ${time}`,
+    scheduleInterval: (minutes) => `Every ${minutes} minutes`,
+    summaryNextRun: (time) => `Next run ${time}`,
+    summaryModel: (label) => `Model ${label}`,
+    summaryWorkingDirectory: (cwd) => `Working Directory ${cwd}`
+  }
+}
+
+function getDisplayLocale(scheduledTaskService) {
+  const locale = scheduledTaskService?.configManager?.getConfig?.()?.settings?.locale
+  return DISPLAY_I18N[locale] ? locale : 'zh-CN'
+}
+
+function getDisplayDict(locale) {
+  return DISPLAY_I18N[DISPLAY_I18N[locale] ? locale : 'zh-CN']
+}
+
+function normalizeModelId(modelId) {
+  return typeof modelId === 'string' ? modelId.trim() : ''
+}
+
+function parseClockTime(value) {
+  const raw = String(value || '').trim()
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw)
+  if (!match) return null
+
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  const seconds = match[3] == null ? 0 : Number(match[3])
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || !Number.isInteger(seconds)) return null
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return null
+
+  return { hours, minutes, seconds }
+}
+
+function padClock(value) {
+  return String(value).padStart(2, '0')
+}
+
+function formatClockTimestamp(timestamp) {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return DEFAULT_DAILY_TIME
+  const hh = padClock(date.getHours())
+  const mm = padClock(date.getMinutes())
+  const ss = padClock(date.getSeconds())
+  return date.getSeconds() > 0 ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`
+}
+
+function applyClockToTimestamp(baseTimestamp, clock) {
+  const date = new Date(Number.isFinite(baseTimestamp) ? baseTimestamp : Date.now())
+  date.setHours(clock.hours, clock.minutes, clock.seconds || 0, 0)
+  return date.getTime()
+}
+
+function resolveExecutionAt(task = {}) {
+  const explicit = Number(task.firstRunAt)
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return Math.trunc(explicit)
+  }
+
+  if (task.scheduleType === 'interval') {
+    for (const candidate of [task.nextRunAt, task.lastScheduledAt, task.lastStartedAt, task.lastRunAt, task.createdAt, task.updatedAt]) {
+      const timestamp = Number(candidate)
+      if (Number.isFinite(timestamp) && timestamp > 0) {
+        return Math.trunc(timestamp)
+      }
+    }
+    return null
+  }
+
+  if (task.scheduleType === 'once') {
+    return null
+  }
+
+  const clock = parseClockTime(task.dailyTime)
+  if (!clock) return null
+  return applyClockToTimestamp(Number(task.createdAt) || Number(task.updatedAt) || Date.now(), clock)
+}
+
+function toSerializableTask(task = {}, locale = 'zh-CN') {
+  const executionAt = resolveExecutionAt(task)
+  return {
+    id: task.id ?? null,
+    name: task.name || '',
+    prompt: task.prompt || '',
+    enabled: task.enabled !== false,
+    scheduleType: task.scheduleType || 'interval',
+    intervalMinutes: task.intervalMinutes ?? null,
+    weeklyDays: Array.isArray(task.weeklyDays) ? task.weeklyDays : [],
+    monthlyMode: task.monthlyMode || 'day_of_month',
+    monthlyDay: task.monthlyMode === 'last_day' ? null : (task.monthlyDay ?? 1),
+    firstRunAt: executionAt,
+    nextRunAt: task.nextRunAt ?? null,
+    lastStartedAt: task.lastStartedAt ?? null,
+    lastScheduledAt: task.lastScheduledAt ?? null,
+    lastRunAt: task.lastRunAt ?? null,
+    createdAt: task.createdAt ?? null,
+    updatedAt: task.updatedAt ?? null,
+    sessionId: task.sessionId || null,
+    runtimeState: sanitizeRuntimeState(task.runtimeState),
+    lastError: task.lastError || null,
+    failureCount: task.failureCount ?? 0,
+    runCount: task.runCount ?? 0,
+    apiProfileId: task.apiProfileId || null,
+    modelId: normalizeModelId(task.modelId) || null,
+    maxRuns: task.maxRuns ?? null,
+    resetCountOnEnable: !!task.resetCountOnEnable,
+    intervalAnchorMode: task.intervalAnchorMode || 'started_at',
+    cwd: task.cwd || null
+  }
+}
+
+function toSerializableTaskRun(run = {}) {
+  return {
+    id: run.id ?? null,
+    taskId: run.taskId ?? null,
+    sessionId: run.sessionId || null,
+    triggerReason: run.triggerReason || 'scheduled',
+    status: run.status || 'success',
+    errorMessage: run.errorMessage || null,
+    scheduledAt: run.scheduledAt ?? null,
+    startedAt: run.startedAt ?? null,
+    finishedAt: run.finishedAt ?? null,
+    createdAt: run.createdAt ?? null
+  }
+}
+
+function formatTimestamp(value) {
+  if (!value) return null
+  const timestamp = Number(value)
+  if (!Number.isFinite(timestamp)) return null
+  return new Date(timestamp).toISOString()
+}
+
+function sanitizeRuntimeState(runtimeState) {
+  if (!runtimeState || typeof runtimeState !== 'object') return null
+
+  const next = { ...runtimeState }
+  if (next._scheduler && typeof next._scheduler === 'object') {
+    const schedulerState = { ...next._scheduler }
+    delete schedulerState.resetSessionAfterRun
+    delete schedulerState.reason
+    if (Object.keys(schedulerState).length > 0) {
+      next._scheduler = schedulerState
+    } else {
+      delete next._scheduler
+    }
+  }
+
+  return Object.keys(next).length > 0 ? next : null
+}
+
+function formatSchedule(task, locale = 'zh-CN') {
+  const dict = getDisplayDict(locale)
+  const executionAt = resolveExecutionAt(task)
+  const executionTime = executionAt ? formatClockTimestamp(executionAt) : DEFAULT_DAILY_TIME
+  switch (task.scheduleType) {
+    case 'daily':
+      return dict.scheduleDaily(executionTime)
+    case 'weekly':
+      return dict.scheduleWeekly(Array.isArray(task.weeklyDays) ? task.weeklyDays.join(',') : '', executionTime)
+    case 'monthly':
+      return task.monthlyMode === 'last_day'
+        ? dict.scheduleMonthlyLastDay(executionTime)
+        : dict.scheduleMonthly(task.monthlyDay || 1, executionTime)
+    case 'workdays':
+      return dict.scheduleWorkdays(executionTime)
+    case 'once':
+      return dict.scheduleOnce(formatTimestamp(executionAt) || dict.onceNotSet)
+    case 'interval':
+    default:
+      return dict.scheduleInterval(task.intervalMinutes || 60)
+  }
+}
+
+function buildTaskSummary(task, locale = 'zh-CN') {
+  const dict = getDisplayDict(locale)
+  const nextRunAt = formatTimestamp(task.nextRunAt) || dict.nextRunUnscheduled
+  const status = task.enabled ? dict.statusEnabled : dict.statusDisabled
+  const summaryParts = [
+    `[#${task.id}] ${task.name}`,
+    status,
+    formatSchedule(task, locale),
+    dict.summaryNextRun(nextRunAt)
+  ]
+
+  const modelId = normalizeModelId(task.modelId)
+  if (modelId) {
+    summaryParts.push(dict.summaryModel(modelId))
+  }
+
+  summaryParts.push(dict.summaryWorkingDirectory(task.cwd || dict.defaultWorkspace))
+
+  return summaryParts.join(' | ')
+}
+
+function buildToolResult(payload) {
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify(payload, null, 2)
+    }]
+  }
+}
+
+function serializeComponentCreateResult(result = {}) {
+  return {
+    success: true,
+    type: result.type || null,
+    componentId: result.componentId || result.skillId || result.agentId || result.id || null,
+    visibility: result.visibility || 'private'
+  }
+}
+
+function countBy(items, getKey) {
+  const counts = new Map()
+  for (const item of items) {
+    const key = String(getKey(item) || '').trim()
+    if (!key) continue
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  return counts
+}
+
+function serializeWeixinTargetForTool(target, displayNameCounts = new Map()) {
+  const displayName = target.displayName || target.userId || target.id
+  const displayNameIsUnique = displayNameCounts.get(displayName) === 1
+  const targetKey = displayNameIsUnique ? displayName : target.id
+  return {
+    id: target.id,
+    targetKey,
+    displayLabel: displayNameIsUnique
+      ? displayName
+      : `${displayName} (${target.accountId})`,
+    accountId: target.accountId,
+    accountUserId: target.accountUserId || null,
+    userId: target.userId,
+    displayName,
+    targetSource: target.targetSource || null,
+    isAuthorizedAccountUser: Boolean(target.isAuthorizedAccountUser),
+    aliases: [
+      targetKey,
+      displayName,
+      target.id,
+      target.userId
+    ].filter(Boolean),
+    sendable: Boolean(target.hasContextToken),
+    hasContextToken: Boolean(target.hasContextToken),
+    lastSeenAt: target.lastSeenAt || null,
+    lastSentAt: target.lastSentAt || null,
+    lastInboundText: target.lastInboundText || '',
+    contextExpiredAt: target.contextExpiredAt || null,
+    lastError: target.lastError || null
+  }
+}
+
+function serializeWeixinTargetsForTool(targets) {
+  const targetList = Array.isArray(targets) ? targets : []
+  const displayNameCounts = countBy(targetList, target => target.displayName || target.userId || target.id)
+  return targetList.map(target => serializeWeixinTargetForTool(target, displayNameCounts))
+}
+
+function buildWeixinSendArgs(args = {}) {
+  const sendArgs = {
+    accountId: args.accountId || undefined,
+    targetId: args.targetKey || args.targetId || args.displayName,
+    text: args.text
+  }
+  if (args.sessionId) sendArgs.sessionId = args.sessionId
+  return sendArgs
+}
+
+function mergeSystemPrompts(...prompts) {
+  return prompts.filter(Boolean).join('\n\n')
+}
+
+function getTaskCandidates(scheduledTaskService) {
+  const tasks = scheduledTaskService?.listTasks?.()
+  return Array.isArray(tasks) ? tasks : []
+}
+
+function resolveTaskReference(scheduledTaskService, { taskId, taskName }) {
+  const tasks = getTaskCandidates(scheduledTaskService)
+
+  if (taskId != null && taskId !== '') {
+    const matchedById = tasks.find(task => String(task.id) === String(taskId))
+    if (matchedById) return matchedById
+    throw new Error(`未找到 ID 为 ${taskId} 的定时任务`)
+  }
+
+  const normalizedName = String(taskName || '').trim().toLowerCase()
+  if (!normalizedName) {
+    throw new Error('必须提供 taskId 或 taskName 才能定位定时任务')
+  }
+
+  const exactMatches = tasks.filter(task => String(task.name || '').trim().toLowerCase() === normalizedName)
+  if (exactMatches.length === 1) return exactMatches[0]
+  if (exactMatches.length > 1) {
+    throw new Error(`存在多个同名定时任务，请改用 taskId：${exactMatches.map(task => buildTaskSummary(task)).join('；')}`)
+  }
+
+  const partialMatches = tasks.filter(task => String(task.name || '').toLowerCase().includes(normalizedName))
+  if (partialMatches.length === 1) return partialMatches[0]
+  if (partialMatches.length > 1) {
+    throw new Error(`存在多个名称匹配 "${taskName}" 的定时任务，请改用 taskId：${partialMatches.map(task => buildTaskSummary(task)).join('；')}`)
+  }
+
+  throw new Error(`未找到名称为 "${taskName}" 的定时任务`)
+}
+
+function serializeTaskWithMetadata(task, locale = 'zh-CN') {
+  const executionAt = resolveExecutionAt(task)
+  return {
+    ...toSerializableTask(task, locale),
+    summary: buildTaskSummary(task, locale),
+    nextRunAtIso: formatTimestamp(task.nextRunAt),
+    lastStartedAtIso: formatTimestamp(task.lastStartedAt),
+    lastScheduledAtIso: formatTimestamp(task.lastScheduledAt),
+    lastRunAtIso: formatTimestamp(task.lastRunAt),
+    firstRunAtIso: formatTimestamp(executionAt),
+    createdAtIso: formatTimestamp(task.createdAt),
+    updatedAtIso: formatTimestamp(task.updatedAt)
+  }
+}
+
+function serializeTaskRunWithMetadata(run) {
+  return {
+    ...toSerializableTaskRun(run),
+    scheduledAtIso: formatTimestamp(run.scheduledAt),
+    startedAtIso: formatTimestamp(run.startedAt),
+    finishedAtIso: formatTimestamp(run.finishedAt),
+    createdAtIso: formatTimestamp(run.createdAt)
+  }
+}
+
+function pickUpdates(args) {
+  const updates = {}
+  for (const key of UPDATE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(args, key) && args[key] !== undefined) {
+      updates[key] = args[key]
+    }
+  }
+  return updates
+}
+
+function buildClearableStringSchema(z, description) {
+  return z.union([z.string(), z.null()]).optional().describe(description)
+}
+
+function buildPositiveIntegerLikeSchema(z, description, { max = null, nullable = false } = {}) {
+  let numberSchema = z.number().int().positive()
+  if (Number.isInteger(max)) {
+    numberSchema = numberSchema.max(max)
+  }
+
+  let schema = z.union([
+    numberSchema,
+    z.string()
+      .regex(/^\d+$/)
+      .refine(value => !Number.isInteger(max) || Number(value) <= max),
+    z.literal('')
+  ])
+
+  if (nullable) {
+    schema = schema.nullable()
+  }
+
+  return schema.optional().describe(description)
+}
+
+function buildExecutionTimeSchema(z, description) {
+  return z.union([z.number().int(), z.string(), z.null()]).optional().describe(description)
+}
+
+async function buildDesktopCapabilityQueryOptions({ scheduledTaskService, weixinNotifyService, feishuBridge, agentComponentCreator, currentUser, session }) {
+  const includeScheduleTools = Boolean(scheduledTaskService && session?.source !== 'scheduled')
+  const includeWeixinNotifyTools = Boolean(weixinNotifyService)
+  const includeComponentTools = Boolean(
+    typeof agentComponentCreator === 'function' &&
+    currentUser &&
+    currentUser.id != null &&
+    String(currentUser.id).trim()
+  )
+
+  if (!includeScheduleTools && !includeWeixinNotifyTools && !includeComponentTools) {
+    return {}
+  }
+
+  const displayLocale = getDisplayLocale(scheduledTaskService)
+
+  const sdk = await import('@anthropic-ai/claude-agent-sdk')
+  const { z } = await import('zod/v4')
+  const { createSdkMcpServer, tool } = sdk
+
+  const taskRefShape = {
+    taskId: z.union([z.string(), z.number()]).optional().describe('定时任务 ID。若已知 ID，优先传这个。'),
+    taskName: z.string().min(1).optional().describe('定时任务名称。仅在 taskId 不清楚时使用。')
+  }
+
+  const sharedTaskFields = {
+    name: z.string().min(1).optional().describe('任务名称'),
+    prompt: z.string().min(1).optional().describe('任务执行时发送给智能体的提示词'),
+    cwd: buildClearableStringSchema(z, '执行工作目录；传 null 或空字符串表示清空并回退到默认工作目录'),
+    apiProfileId: buildClearableStringSchema(z, 'API Profile ID；传 null 或空字符串表示清空并回退到默认 API Profile'),
+    modelId: buildClearableStringSchema(z, '真实模型 ID；传 null 或空字符串表示跟随所选 API Profile 的默认模型'),
+    maxRuns: buildPositiveIntegerLikeSchema(z, '任务生命周期内的累计执行次数上限，可为 null；这不是单次会话的 maxTurns', { nullable: true }),
+    resetCountOnEnable: z.boolean().optional().describe('从停用重新启用时，是否重置已执行次数和运行态'),
+    intervalAnchorMode: z.enum(INTERVAL_ANCHOR_MODES).optional().describe('间隔调度推进基准：按开始时间或结束时间'),
+    enabled: z.boolean().optional().describe('是否启用'),
+    scheduleType: z.enum(SCHEDULE_TYPES).optional().describe('调度类型'),
+    intervalMinutes: buildPositiveIntegerLikeSchema(z, '间隔分钟，仅 interval 使用'),
+    weeklyDays: z.array(z.union([z.number().int().min(0).max(6), z.string().regex(/^[0-6]$/)])).optional().describe('每周执行日，0=周日，6=周六'),
+    monthlyMode: z.enum(MONTHLY_MODES).optional().describe('每月规则：固定日期或最后一天'),
+    monthlyDay: buildPositiveIntegerLikeSchema(z, '每月执行日，1-31，仅 monthly + day_of_month 使用', { max: 31 }),
+    firstRunAt: buildExecutionTimeSchema(z, '执行时间戳（毫秒）或可解析的日期时间字符串。interval 用作固定相位基准；once 为唯一触发时间；daily/weekly/monthly/workdays 仅使用其中的时分秒')
+  }
+
+  const scheduleTools = includeScheduleTools ? [
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[0],
+      '列出当前 Jedi 中的全部定时任务，便于后续通过 taskId 或任务名做修改。',
+      {},
+      async () => {
+        const tasks = getTaskCandidates(scheduledTaskService).map(task => serializeTaskWithMetadata(task, displayLocale))
+
+        return buildToolResult({
+          action: 'list',
+          count: tasks.length,
+          tasks
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[1],
+      '查看一个 Jedi 定时任务的详情。先提供 taskId；若没有 taskId，可提供 taskName。',
+      taskRefShape,
+      async (args) => {
+        const task = resolveTaskReference(scheduledTaskService, args)
+        return buildToolResult({
+          action: 'get',
+          task: serializeTaskWithMetadata(task, displayLocale)
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[2],
+      '查看一个 Jedi 定时任务最近的执行记录。先提供 taskId；若没有 taskId，可提供 taskName。',
+      {
+        ...taskRefShape,
+        limit: buildPositiveIntegerLikeSchema(z, '返回最近几条记录，默认 20，最大 50', { max: 50 })
+      },
+      async (args) => {
+        const task = resolveTaskReference(scheduledTaskService, args)
+        const limit = args.limit == null || args.limit === '' ? 20 : Number(args.limit)
+        const runs = typeof scheduledTaskService.getTaskRuns === 'function'
+          ? scheduledTaskService.getTaskRuns(task.id, limit)
+          : []
+
+        return buildToolResult({
+          action: 'runs',
+          task: serializeTaskWithMetadata(task, displayLocale),
+          count: Array.isArray(runs) ? runs.length : 0,
+          runs: Array.isArray(runs) ? runs.map(run => serializeTaskRunWithMetadata(run)) : []
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[3],
+      '创建一个新的 Jedi 定时任务。',
+      {
+        name: z.string().min(1).describe('任务名称'),
+        prompt: z.string().min(1).describe('任务提示词'),
+        scheduleType: z.enum(SCHEDULE_TYPES).describe('调度类型'),
+        intervalMinutes: buildPositiveIntegerLikeSchema(z, '间隔分钟，仅 interval 使用'),
+        weeklyDays: z.array(z.union([z.number().int().min(0).max(6), z.string().regex(/^[0-6]$/)])).optional().describe('每周执行日，0=周日，6=周六'),
+        monthlyMode: z.enum(MONTHLY_MODES).optional().describe('每月规则：固定日期或最后一天'),
+        monthlyDay: buildPositiveIntegerLikeSchema(z, '每月执行日，1-31，仅 monthly + day_of_month 使用', { max: 31 }),
+        firstRunAt: buildExecutionTimeSchema(z, '执行时间戳（毫秒）或可解析的日期时间字符串。interval 用作固定相位基准；once 为唯一触发时间；daily/weekly/monthly/workdays 仅使用其中的时分秒'),
+        cwd: buildClearableStringSchema(z, '执行工作目录；传 null 或空字符串表示清空并回退到默认工作目录'),
+        apiProfileId: buildClearableStringSchema(z, 'API Profile ID；传 null 或空字符串表示清空并回退到默认 API Profile'),
+        modelId: buildClearableStringSchema(z, '真实模型 ID；传 null 或空字符串表示跟随所选 API Profile 的默认模型'),
+        maxRuns: buildPositiveIntegerLikeSchema(z, '任务生命周期内的累计执行次数上限，可为 null；这不是单次会话的 maxTurns', { nullable: true }),
+        resetCountOnEnable: z.boolean().optional().describe('从停用重新启用时，是否重置已执行次数和运行态'),
+        intervalAnchorMode: z.enum(INTERVAL_ANCHOR_MODES).optional().describe('间隔调度推进基准：按开始时间或结束时间'),
+        enabled: z.boolean().optional().describe('是否启用')
+      },
+      async (args) => {
+        const created = await scheduledTaskService.createTask(args)
+        return buildToolResult({
+          action: 'create',
+          task: serializeTaskWithMetadata(created, displayLocale)
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[4],
+      '更新一个已存在的 Jedi 定时任务。先提供 taskId；若没有 taskId，可提供 taskName。',
+      {
+        ...taskRefShape,
+        ...sharedTaskFields
+      },
+      async (args) => {
+        const targetTask = resolveTaskReference(scheduledTaskService, args)
+        const updates = pickUpdates(args)
+        if (Object.keys(updates).length === 0) {
+          throw new Error('没有可更新的字段，请至少提供一个 updates 字段')
+        }
+        const updated = await scheduledTaskService.updateTask(targetTask.id, updates)
+        return buildToolResult({
+          action: 'update',
+          task: serializeTaskWithMetadata(updated, displayLocale)
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[5],
+      '启用一个已存在的 Jedi 定时任务。先提供 taskId；若没有 taskId，可提供 taskName。',
+      taskRefShape,
+      async (args) => {
+        const targetTask = resolveTaskReference(scheduledTaskService, args)
+        const updated = await scheduledTaskService.updateTask(targetTask.id, { enabled: true })
+        return buildToolResult({
+          action: 'enable',
+          task: serializeTaskWithMetadata(updated, displayLocale)
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[6],
+      '停用一个已存在的 Jedi 定时任务。先提供 taskId；若没有 taskId，可提供 taskName。',
+      taskRefShape,
+      async (args) => {
+        const targetTask = resolveTaskReference(scheduledTaskService, args)
+        const updated = await scheduledTaskService.updateTask(targetTask.id, { enabled: false })
+        return buildToolResult({
+          action: 'disable',
+          task: serializeTaskWithMetadata(updated, displayLocale)
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[7],
+      '立即执行一个 Jedi 定时任务一次。先提供 taskId；若没有 taskId，可提供 taskName。',
+      taskRefShape,
+      async (args) => {
+        const targetTask = resolveTaskReference(scheduledTaskService, args)
+        const updated = await scheduledTaskService.runTaskNow(targetTask.id)
+        return buildToolResult({
+          action: 'run_now',
+          task: serializeTaskWithMetadata(updated, displayLocale)
+        })
+      }
+    ),
+    tool(
+      DESKTOP_CAPABILITY_TOOL_NAMES[8],
+      '删除一个已存在的 Jedi 定时任务。先提供 taskId；若没有 taskId，可提供 taskName。',
+      taskRefShape,
+      async (args) => {
+        const targetTask = resolveTaskReference(scheduledTaskService, args)
+        const result = await scheduledTaskService.deleteTask(targetTask.id)
+        return buildToolResult({
+          action: 'delete',
+          deletedTask: serializeTaskWithMetadata(targetTask, displayLocale),
+          result
+        })
+      }
+    )
+  ] : []
+
+  const weixinNotifyTools = includeWeixinNotifyTools ? [
+    tool(
+      WEIXIN_NOTIFY_TOOL_NAMES[0],
+      '列出 Jedi 已绑定且可通知的微信目标。目标来自用户完成 iLink 扫码授权后捕获到的可发送上下文。',
+      {},
+      async () => {
+        const accounts = typeof weixinNotifyService.listAccounts === 'function'
+          ? weixinNotifyService.listAccounts()
+          : []
+        const targets = typeof weixinNotifyService.listTargets === 'function'
+          ? weixinNotifyService.listTargets()
+          : []
+        const serializedTargets = serializeWeixinTargetsForTool(targets)
+
+        return buildToolResult({
+          action: 'weixin_notify_list_targets',
+          accountCount: Array.isArray(accounts) ? accounts.length : 0,
+          targetCount: serializedTargets.length,
+          accounts,
+          targets: serializedTargets,
+          usage: {
+            sendWith: 'Use targetKey as weixin_notify_send.targetKey. If sendable is false, ask that Weixin user to scan the authorization QR code again, then capture latest messages.'
+          }
+        })
+      }
+    ),
+    tool(
+      WEIXIN_NOTIFY_TOOL_NAMES[1],
+      '通过 Jedi 微信通知通道发送一条文本通知。仅支持 weixin_notify_list_targets 返回且 sendable=true 的目标。',
+      {
+        targetKey: z.string().min(1).optional().describe('推荐使用 weixin_notify_list_targets 返回的 targetKey。'),
+        targetId: z.string().min(1).optional().describe('兼容字段：可使用 list_targets 返回的 id、displayName 或 userId。'),
+        displayName: z.string().min(1).optional().describe('兼容字段：目标备注名；若同名目标不唯一，需要同时提供 accountId。'),
+        accountId: z.string().min(1).optional().describe('发送账号 ID；多账号时必须提供。'),
+        text: z.string().min(1).max(4000).describe('要发送的通知文本。')
+      },
+      async (args) => {
+        const sendArgs = buildWeixinSendArgs(args)
+        if (!sendArgs.targetId) {
+          throw new Error('必须提供 targetKey、targetId 或 displayName')
+        }
+        if (session?.id) {
+          sendArgs.sessionId = session.id
+        }
+        const result = await weixinNotifyService.sendText(sendArgs)
+        return buildToolResult({
+          action: 'weixin_notify_send',
+          recipient: result.target
+            ? serializeWeixinTargetForTool(result.target, new Map([[result.target.displayName || result.target.userId || result.target.id, 1]]))
+            : null,
+          result
+        })
+      }
+    ),
+    tool(
+      WEIXIN_NOTIFY_TOOL_NAMES[2],
+      'Send a scheduled-task notification through Weixin first, and automatically fall back to Feishu when Weixin is unavailable or cooling down.',
+      {
+        targetKey: z.string().min(1).optional().describe('Recommended Weixin targetKey from weixin_notify_list_targets.'),
+        targetId: z.string().min(1).optional().describe('Compatible Weixin target id, displayName, or userId.'),
+        displayName: z.string().min(1).optional().describe('Compatible Weixin target display name.'),
+        accountId: z.string().min(1).optional().describe('Weixin account id, required when the target name is ambiguous.'),
+        feishuChatId: z.string().min(1).optional().describe('Optional Feishu chat_id override. If omitted, config.feishu.notificationChatId or FEISHU_NOTIFICATION_CHAT_ID is used.'),
+        taskName: z.string().min(1).optional().describe('Optional scheduled task name shown in fallback notices.'),
+        text: z.string().min(1).max(4000).describe('Notification text.')
+      },
+      async (args) => {
+        const sendArgs = buildWeixinSendArgs(args)
+        if (!sendArgs.targetId) {
+          throw new Error('Must provide targetKey, targetId, or displayName for the Weixin primary channel')
+        }
+        if (session?.id) {
+          sendArgs.sessionId = session.id
+        }
+
+        const router = getNotificationRouter({
+          weixinNotifyService,
+          feishuBridge
+        })
+        router.resetCooldown()
+        const result = await router.send({
+          text: args.text,
+          taskName: args.taskName || '',
+          weixin: sendArgs,
+          feishu: { chatId: args.feishuChatId }
+        })
+        return buildToolResult({
+          action: 'notification_send',
+          result
+        })
+      }
+    )
+  ] : []
+
+  const componentTools = includeComponentTools ? [
+    tool(
+      COMPONENT_TOOL_NAMES[0],
+      'Create a private user-owned Jedi skill or agent from an agent conversation. Use only for explicit save/create requests.',
+      {
+        type: z.enum(['skill', 'agent']).describe('Component type to create.'),
+        id: z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/).describe('Stable component id, for example frontend-dev.'),
+        content: z.string().min(1).describe('Complete raw Markdown content. For type=skill this must be a standard Claude Code SKILL.md with YAML frontmatter containing name and description, followed by Markdown instructions.'),
+        conversationId: z.string().min(1).optional().describe('Origin conversation id. Defaults to the current session id.'),
+        messageId: z.string().min(1).optional().describe('Origin message id, when known.')
+      },
+      async (args) => {
+        const result = await agentComponentCreator({
+          type: args.type,
+          conversationId: args.conversationId || session?.id || null,
+          messageId: args.messageId || null,
+          component: {
+            id: args.id,
+            content: args.content
+          },
+          currentUser
+        })
+
+        if (!result?.success) {
+          throw new Error(result?.error || 'Failed to create Jedi component.')
+        }
+
+        return buildToolResult({
+          action: COMPONENT_TOOL_NAMES[0],
+          result: serializeComponentCreateResult(result)
+        })
+      }
+    )
+  ] : []
+
+  return {
+    mcpServers: {
+      [DESKTOP_CAPABILITY_SERVER_NAME]: createSdkMcpServer({
+        name: DESKTOP_CAPABILITY_SERVER_NAME,
+        tools: [
+          ...scheduleTools,
+          ...weixinNotifyTools,
+          ...componentTools
+        ]
+      })
+    },
+    appendSystemPrompt: mergeSystemPrompts(
+      includeScheduleTools ? DESKTOP_CAPABILITY_SYSTEM_PROMPT : null,
+      includeWeixinNotifyTools ? WEIXIN_NOTIFY_SYSTEM_PROMPT : null,
+      includeComponentTools ? COMPONENT_CREATION_SYSTEM_PROMPT : null
+    ),
+    allowedTools: [
+      ...(includeScheduleTools ? DESKTOP_CAPABILITY_ALLOWED_TOOLS : []),
+      ...(includeWeixinNotifyTools ? WEIXIN_NOTIFY_ALLOWED_TOOLS : []),
+      ...(includeComponentTools ? COMPONENT_ALLOWED_TOOLS : [])
+    ],
+    disallowedTools: includeScheduleTools ? CONFLICTING_CRON_TOOLS : undefined
+  }
+}
+
+module.exports = {
+  buildDesktopCapabilityQueryOptions,
+  DESKTOP_CAPABILITY_SYSTEM_PROMPT,
+  CONFLICTING_CRON_TOOLS,
+  DESKTOP_CAPABILITY_ALLOWED_TOOLS,
+  WEIXIN_NOTIFY_ALLOWED_TOOLS,
+  COMPONENT_CREATION_SYSTEM_PROMPT,
+  COMPONENT_ALLOWED_TOOLS,
+  serializeComponentCreateResult
+}

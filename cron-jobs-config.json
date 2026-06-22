@@ -1,0 +1,43 @@
+{
+  "version": "1.3",
+  "created": "2026-06-16",
+  "updated": "2026-06-22",
+  "notification": {
+    "targetKey": "何杨文",
+    "channel": "weixin_fallback_feishu"
+  },
+  "databases": {
+    "aipin_data": "/home/jedi/.local/share/jedi-web/aipin-data.sqlite"
+  },
+  "jobs": [
+    {
+      "id": "4a961a7f",
+      "name": "服务器资源监控",
+      "cron": "3,13,23,33,43,53 * * * *",
+      "recurring": true,
+      "description": "每10分钟推送服务器内存使用率和agent进程数",
+      "template": "📊 服务器实时监控\n\n【内存使用率】\n| 指标 | 值 |\n|------|-----|\n| 总内存 | {total} |\n| 已用 | {used}（{percent}） |\n| 可用 | {available} |\n\n【Agent 处理情况】{count}个运行中\n| PID | 启动 | CPU | 内存(MB) |\n|-----|------|-----|-----|\n{agent_rows}",
+      "prompt": "服务器资源监控定时推送任务。\n\n请执行以下步骤：\n1. 运行 `free -h` 获取内存使用情况\n2. 运行 `ps aux | grep -E \"agent|Agent\" | grep -v grep | wc -l` 统计当前 agent 进程数；同时运行 `ps aux | grep -E \"agent|Agent\" | grep -v grep | awk '{printf \"| %s | %s | %s%% | %.0fMB |\\n\", $2, $9, $3, $6/1024}'` 获取 agent 进程详情（PID、启动时间、CPU%、内存MB）\n3. 将结果格式化为如下排版：\n\n📊 服务器实时监控\n\n【内存使用率】\n| 指标 | 值 |\n|------|-----|\n| 总内存 | {total} |\n| 已用 | {used}（{percent}） |\n| 可用 | {available} |\n\n【Agent 处理情况】{count}个运行中\n| PID | 启动 | CPU | 内存(MB) |\n|-----|------|-----|-----|\n（agent进程列表）\n\n4. 使用 notification_send 工具发送通知，targetKey 为 \"何杨文\"，text 为上述格式化内容。如果微信通道不可用会自动回退到飞书。"
+    },
+    {
+      "id": "1c975f7b",
+      "name": "美的舆情统计",
+      "cron": "7 * * * *",
+      "recurring": true,
+      "db": "/home/jedi/.local/share/jedi-web/aipin-data.sqlite",
+      "description": "每小时推送美的舆情文章处理统计",
+      "template": "📡 美的舆情监控\n\n【近1小时概况】{window}\n| 指标 | 数量 |\n|------|------|\n| 新接收 | {new_1h} 条 |\n| 处理完成 | {processed} 条 |\n| 推送成功 | {push_ok} 条 |\n| 推送失败 | {push_fail} 条 |\n\n【今日累计】{today_total} 条\n| 分类 | 数量 |\n|------|------|\n| 推送 | {t_push} |\n| 不推送 | {t_nopush} |\n| 重复 | {t_dup} |\n\n【全量数据】\n| 指标 | 数值 |\n|------|------|\n| 总计 | {total_all} |\n| 已推送 | {total_pushed} |\n| 失败 | {total_failed} |\n| 处理中 | {processing} |",
+      "prompt": "📡 美的舆情监控 — 每小时统计推送。\n\n先执行 Python 查询：\n\n```python3\nimport sqlite3\nfrom datetime import datetime, timezone, timedelta\n\nconn = sqlite3.connect('/home/jedi/.local/share/jedi-web/aipin-data.sqlite')\nc = conn.cursor()\n\nnow = datetime.now(timezone.utc) + timedelta(hours=8)\nhour_start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)\nhour_end = now.replace(minute=0, second=0, microsecond=0)\ntoday_start = now.replace(hour=0, minute=0, second=0, microsecond=0)\nutc_start = (hour_start - timedelta(hours=8)).strftime('%Y-%m-%dT%H:%M:%S')\nutc_end = (hour_end - timedelta(hours=8)).strftime('%Y-%m-%dT%H:%M:%S')\ntoday_utc = (today_start - timedelta(hours=8)).strftime('%Y-%m-%dT%H:%M:%S')\nwindow = f'{hour_start.strftime(\"%H:%M\")}-{hour_end.strftime(\"%H:%M\")}'\n\nc.execute(f\"SELECT COUNT(*) FROM aipin_data_items WHERE received_at >= '{utc_start}' AND received_at < '{utc_end}'\")\nnew_1h = c.fetchone()[0]\nc.execute(f\"SELECT COUNT(*) FROM aipin_data_items WHERE finished_at >= '{utc_start}' AND finished_at < '{utc_end}'\")\nprocessed_1h = c.fetchone()[0]\nc.execute(f\"SELECT COUNT(*) FROM aipin_data_items WHERE push_status='success' AND pushed_at >= '{utc_start}' AND pushed_at < '{utc_end}'\")\npush_ok = c.fetchone()[0]\nc.execute(f\"SELECT COUNT(*) FROM aipin_data_items WHERE push_status='failed' AND pushed_at >= '{utc_start}' AND pushed_at < '{utc_end}'\")\npush_fail = c.fetchone()[0]\n\nc.execute(f\"SELECT COUNT(*) FROM aipin_data_items WHERE received_at >= '{today_utc}'\")\ntoday_total = c.fetchone()[0]\nc.execute(f\"SELECT push_flag, COUNT(*) FROM aipin_data_items WHERE received_at >= '{today_utc}' GROUP BY push_flag\")\nflags = dict(c.fetchall())\n\nc.execute('SELECT COUNT(*) FROM aipin_data_items')\ntotal_all = c.fetchone()[0]\nc.execute(\"SELECT COUNT(*) FROM aipin_data_items WHERE push_status='success'\")\ntotal_pushed = c.fetchone()[0]\nc.execute(\"SELECT COUNT(*) FROM aipin_data_items WHERE process_status='failed'\")\ntotal_failed = c.fetchone()[0]\nc.execute(\"SELECT COUNT(*) FROM aipin_data_items WHERE process_status='received'\")\npending = c.fetchone()[0]\nc.execute(\"SELECT COUNT(*) FROM aipin_data_items WHERE process_status='processing'\")\nprocessing = c.fetchone()[0]\n\nprint(f'{window}|{new_1h}|{processed_1h}|{push_ok}|{push_fail}|{today_total}|{flags.get(\"推送\",0)}|{flags.get(\"不推送\",0)+(flags.get(None,0))}|{flags.get(\"重复\",0)}|{total_all}|{total_pushed}|{total_failed}|{pending}|{processing}')\n```\n\n然后按以下格式用 notification_send 发送，targetKey=\"何杨文\"：\n\n📡 美的舆情监控\n\n【近1小时概况】{WINDOW}\n| 指标 | 数量 |\n|------|------|\n| 新接收 | {new_1h} 条 |\n| 处理完成 | {processed} 条 |\n| 推送成功 | {push_ok} 条 |\n| 推送失败 | {push_fail} 条 |\n\n【今日累计】{today_total} 条\n| 分类 | 数量 |\n|------|------|\n| 推送 | {t_push} |\n| 不推送 | {t_nopush} |\n| 重复 | {t_dup} |\n\n【全量数据】\n| 指标 | 数值 |\n|------|------|\n| 总计 | {total_all} |\n| 已推送 | {total_pushed} |\n| 失败 | {total_failed} |\n| 处理中 | {processing} |"
+    },
+    {
+      "id": "22573411",
+      "name": "续期提醒（监控+舆情）",
+      "cron": "7 9 22 6 *",
+      "recurring": false,
+      "description": "一次性提醒：服务器监控和美的舆情统计即将到期",
+      "template": "⏰ 定时任务续期提醒\n\n以下任务将于明天到期，请确认是否需要续期：\n  · 服务器资源监控 (4a961a7f)\n  · 美的舆情统计 (1c975f7b)",
+      "prompt": "提醒：两个定时任务（服务器监控 4a961a7f 和美的舆情统计 1c975f7b）将于明天到期。请通知用户（targetKey=\"何杨文\"）是否需要续期，使用 notification_send 发送提醒消息。"
+    }
+  ],
+  "import_instructions": "服务重启后，对每个 job 调用 CronCreate，参数为 cron、prompt、recurring。"
+}

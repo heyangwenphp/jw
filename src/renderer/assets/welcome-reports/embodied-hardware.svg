@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Embodied hardware report cover">
+  <defs>
+    <linearGradient id="floor" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef6f3"/>
+      <stop offset="1" stop-color="#d7e4ff"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset=".5" stop-color="#b9c6d9"/>
+      <stop offset="1" stop-color="#64748b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb86b"/>
+      <stop offset="1" stop-color="#ef476f"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#floor)"/>
+  <path d="M0 274 C118 246 207 290 319 266 S510 226 640 258 V360 H0z" fill="#bfe0d5"/>
+  <g stroke="#64748b" stroke-width="2" opacity=".3">
+    <path d="M38 296h568M70 320h500M120 344h402"/>
+    <path d="M114 274l-42 86M212 272l-18 88M320 266v94M430 255l32 105M540 248l74 112"/>
+  </g>
+  <g transform="translate(226 66)">
+    <rect x="67" y="0" width="74" height="58" rx="16" fill="url(#metal)" stroke="#475569" stroke-width="4"/>
+    <rect x="83" y="18" width="16" height="12" rx="6" fill="#0f172a"/>
+    <rect x="110" y="18" width="16" height="12" rx="6" fill="#0f172a"/>
+    <path d="M92 43q12 8 25 0" fill="none" stroke="#0f172a" stroke-width="4" stroke-linecap="round"/>
+    <rect x="88" y="58" width="33" height="26" rx="12" fill="#64748b"/>
+    <rect x="51" y="82" width="108" height="92" rx="24" fill="url(#metal)" stroke="#475569" stroke-width="4"/>
+    <circle cx="77" cy="116" r="10" fill="#47d5c4"/>
+    <circle cx="132" cy="116" r="10" fill="#ffb86b"/>
+    <path d="M54 103L0 77M156 103l54-32" stroke="#64748b" stroke-width="16" stroke-linecap="round"/>
+    <path d="M0 77l-30 38M210 71l32 39" stroke="#94a3b8" stroke-width="12" stroke-linecap="round"/>
+    <path d="M80 174l-18 86M131 174l21 86" stroke="#64748b" stroke-width="18" stroke-linecap="round"/>
+    <path d="M54 262h48M129 262h52" stroke="#334155" stroke-width="14" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(86 68)" fill="none" stroke="#0f766e" stroke-width="7" stroke-linecap="round" opacity=".72">
+    <path d="M0 112c30-44 71-63 124-57"/>
+    <path d="M37 57l29 22M57 36l25 33M80 26l15 38M105 25l-4 41"/>
+  </g>
+  <g transform="translate(470 64)">
+    <rect x="0" y="70" width="94" height="72" rx="14" fill="#ffffff" opacity=".78"/>
+    <path d="M18 102h58M18 119h41" stroke="#334155" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="17" cy="84" r="8" fill="url(#accent)"/>
+  </g>
+  <rect x="36" y="36" width="230" height="50" rx="8" fill="#ffffff" opacity=".7"/>
+  <path d="M58 59h96M58 72h160" stroke="#334155" stroke-width="8" stroke-linecap="round" opacity=".8"/>
+</svg>

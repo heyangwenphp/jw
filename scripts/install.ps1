@@ -1,0 +1,197 @@
+﻿#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Jedi installer for Windows.
+.DESCRIPTION
+    Detects Claude Code CLI, installs it if missing, then launches
+    the Jedi .exe installer found in the same directory.
+.NOTES
+    Run: powershell -ExecutionPolicy Bypass -File .\install.ps1
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+function Write-Step { param([string]$Message) Write-Host "`n>> $Message" -ForegroundColor Cyan }
+function Write-Ok   { param([string]$Message) Write-Host "   [OK] $Message" -ForegroundColor Green }
+function Write-Warn { param([string]$Message) Write-Host "   [!] $Message" -ForegroundColor Yellow }
+function Write-Err  { param([string]$Message) Write-Host "   [ERROR] $Message" -ForegroundColor Red }
+
+# ---------------------------------------------------------------------------
+# 1. Check Node.js (required for Agent mode)
+# ---------------------------------------------------------------------------
+Write-Step "Checking Node.js..."
+
+$nodeAvailable = $false
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+
+if ($null -ne $nodeCmd) {
+    $nodeAvailable = $true
+    $nodeVer = & node --version 2>$null
+    Write-Ok "Node.js found: $nodeVer"
+} else {
+    Write-Warn "Node.js not found"
+    Write-Host ""
+    Write-Host "  📌 Node.js 依赖说明：" -ForegroundColor White
+    Write-Host "    • Terminal 模式：不需要（可正常使用）" -ForegroundColor White
+    Write-Host "    • Agent 模式：必需（需要系统 Node.js 环境）" -ForegroundColor White
+    Write-Host ""
+    $installNode = Read-Host "  是否现在安装 Node.js？(y/N)"
+
+    if ($installNode -eq "y" -or $installNode -eq "Y") {
+        # Check if winget is available
+        $winget = Get-Command winget -ErrorAction SilentlyContinue
+        if ($null -ne $winget) {
+            Write-Step "Installing Node.js via winget..."
+            try {
+                & winget install OpenJS.NodeJS.LTS
+                $nodeAvailable = $true
+                # Refresh PATH
+                $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                            [System.Environment]::GetEnvironmentVariable('Path', 'User')
+                $nodeVer = & node --version 2>$null
+                Write-Ok "Node.js installed: $nodeVer"
+            } catch {
+                Write-Err "Failed to install Node.js via winget"
+            }
+        } else {
+            Write-Warn "winget not found"
+            Write-Host ""
+            Write-Host "  请手动安装 Node.js：" -ForegroundColor White
+            Write-Host "    下载地址: https://nodejs.org/" -ForegroundColor White
+            Write-Host ""
+            Write-Host "  安装完成后重新运行此脚本以启用 Agent 模式" -ForegroundColor White
+        }
+    }
+
+    if (-not $nodeAvailable) {
+        Write-Warn "继续安装（Agent 模式将不可用）"
+        Write-Host ""
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 2. Detect Claude Code CLI
+# ---------------------------------------------------------------------------
+Write-Step "Detecting Claude Code CLI..."
+
+function Test-Claude {
+    $cmd = Get-Command claude -ErrorAction SilentlyContinue
+    return $null -ne $cmd
+}
+
+if (Test-Claude) {
+    $ver = & claude --version 2>$null
+    Write-Ok "Claude CLI found: $ver"
+} else {
+    Write-Warn "Claude CLI not found. Installing..."
+
+    # ---------------------------------------------------------------------------
+    # 3. Network note
+    # ---------------------------------------------------------------------------
+    Write-Host ""
+    Write-Host "  📌 网络说明：" -ForegroundColor White
+    Write-Host "    • 本脚本会自动使用系统代理设置" -ForegroundColor White
+    Write-Host "    • 如果您使用代理，请确保系统代理已开启（设置 → 网络 → 代理）" -ForegroundColor White
+    Write-Host "    • 或手动设置环境变量：`$env:HTTPS_PROXY='http://your-proxy:port'" -ForegroundColor White
+    Write-Host ""
+
+    # ---------------------------------------------------------------------------
+    # 4. Install Claude Code CLI (official installer)
+    # ---------------------------------------------------------------------------
+    Write-Step "Installing Claude Code CLI..."
+
+    $cliInstalled = $false
+
+    # Try official installer
+    try {
+        Invoke-RestMethod https://claude.ai/install.ps1 -ErrorAction Stop | Invoke-Expression
+        Write-Ok "Installed via official installer"
+        $cliInstalled = $true
+    } catch {
+        Write-Warn "Official installer failed."
+
+        # Try npm if available
+        $npm = Get-Command npm -ErrorAction SilentlyContinue
+        if ($null -ne $npm) {
+            Write-Host ""
+            $useNpm = Read-Host "  是否尝试使用 npm 安装？(y/N)"
+
+            if ($useNpm -eq "y" -or $useNpm -eq "Y") {
+                try {
+                    & npm install -g @anthropic-ai/claude-code
+                    Write-Ok "Installed via npm"
+                    $cliInstalled = $true
+                } catch {
+                    Write-Warn "npm installation also failed."
+                }
+            }
+        }
+    }
+
+    # Check installation result
+    if ($cliInstalled) {
+        # Refresh PATH for the current session
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                    [System.Environment]::GetEnvironmentVariable('Path', 'User')
+
+        if (Test-Claude) {
+            $ver = & claude --version 2>$null
+            Write-Ok "Claude CLI installed successfully: $ver"
+        } else {
+            Write-Warn "Claude CLI installed but not in PATH. Please restart terminal."
+        }
+    } else {
+        # CLI installation failed, offer to continue with Desktop only
+        Write-Host ""
+        Write-Warn "Claude CLI 自动安装失败。"
+        Write-Host ""
+        Write-Host "  可以先安装 Jedi，稍后手动安装 Claude CLI：" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  【方式 1】使用代理 + 官方脚本（推荐）" -ForegroundColor Yellow
+        Write-Host "    `$env:HTTPS_PROXY='http://your-proxy:port'" -ForegroundColor White
+        Write-Host "    irm https://claude.ai/install.ps1 | iex" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  【方式 2】使用 npm（需要 Node.js）" -ForegroundColor Yellow
+        Write-Host "    npm install -g @anthropic-ai/claude-code" -ForegroundColor White
+        Write-Host ""
+        $continueDesktop = Read-Host "  是否继续仅安装 Jedi？(y/N)"
+
+        if ($continueDesktop -ne "y" -and $continueDesktop -ne "Y") {
+            Write-Host ""
+            Write-Host "安装已取消。" -ForegroundColor Yellow
+            exit 1
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 5. Find and launch Jedi installer
+# ---------------------------------------------------------------------------
+Write-Step "Looking for Jedi installer..."
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$installers = @(Get-ChildItem -Path $scriptDir -Filter '*.exe' |
+    Where-Object { $_.Name -match '(?i)jedi' } |
+    Sort-Object LastWriteTime -Descending)
+
+if ($installers.Count -eq 0) {
+    # Also check parent directory (scripts/ is inside the release folder)
+    $parentDir = Split-Path -Parent $scriptDir
+    $installers = @(Get-ChildItem -Path $parentDir -Filter '*.exe' |
+        Where-Object { $_.Name -match '(?i)jedi' } |
+        Sort-Object LastWriteTime -Descending)
+}
+
+if ($installers.Count -gt 0) {
+    $installer = $installers[0].FullName
+    Write-Ok "Found installer: $($installers[0].Name)"
+    Write-Step "Launching Jedi installer..."
+    Start-Process -FilePath $installer
+    Write-Ok "Installer launched. Follow the on-screen instructions."
+} else {
+    Write-Warn "No Jedi installer (.exe) found in the current directory."
+    Write-Host "  Please download it from the releases page and run it manually." -ForegroundColor Yellow
+}
+
+Write-Host "`nDone." -ForegroundColor Cyan

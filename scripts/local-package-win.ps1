@@ -1,0 +1,46 @@
+$ErrorActionPreference = "Stop"
+
+$VERSION = (Get-Content package.json -Encoding UTF8 | ConvertFrom-Json).version
+$RELEASE_DIR = "jedi-${VERSION}-windows"
+$OUTPUT = "dist\jedi-${VERSION}-windows.zip"
+
+Write-Host "Packaging Windows installer: ${OUTPUT}..."
+
+New-Item -ItemType Directory -Force -Path $RELEASE_DIR | Out-Null
+
+$exeFile = Get-ChildItem -Path dist -Filter "*${VERSION}*.exe" | Select-Object -First 1
+if (-not $exeFile) {
+    $exeFile = Get-ChildItem -Path dist -Filter "*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
+if ($exeFile) {
+    Copy-Item $exeFile.FullName "$RELEASE_DIR\Jedi Setup ${VERSION}.exe"
+} else {
+    Write-Error "No .exe file found in dist/"
+    exit 1
+}
+Copy-Item "scripts\install.ps1" "$RELEASE_DIR\"
+
+@"
+# Jedi ${VERSION} - Windows Installer
+
+## The First Install (Recommended)
+
+Right-click PowerShell and "Run as Administrator", then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+This will:
+1. Check if Node.js and Claude Code CLI is installed (install if not)
+2. Launch Jedi installer
+
+## Update Install
+
+Double-click ``Jedi Setup ${VERSION}.exe``
+"@ | Out-File -FilePath "$RELEASE_DIR\README.md" -Encoding UTF8
+
+Compress-Archive -Path $RELEASE_DIR -DestinationPath $OUTPUT -Force
+Remove-Item -Recurse -Force $RELEASE_DIR
+
+Write-Host "Done: ${OUTPUT}"
