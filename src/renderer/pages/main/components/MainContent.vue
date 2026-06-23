@@ -178,7 +178,6 @@
           <ModelSettingsContent v-if="settingsActiveTab === 'model'" />
           <IMTab v-if="settingsActiveTab === 'im'" />
           <SettingsWorkbenchContent v-if="settingsActiveTab === 'capability'" :initial-tab="settingsWorkbenchInitialTab" />
-          <ProjectManagementContent v-if="settingsActiveTab === 'project'" />
         </div>
       </div>
     </div>
@@ -212,7 +211,6 @@ import Icon from '@components/icons/Icon.vue'
 import ModelSettingsContent from '@/pages/model-settings/components/ModelSettingsContent.vue'
 import IMTab from '@/pages/settings-workbench/components/IMTab.vue'
 import SettingsWorkbenchContent from '@/pages/settings-workbench/components/SettingsWorkbenchContent.vue'
-import ProjectManagementContent from '@/pages/project-management/components/ProjectManagementContent.vue'
 import MideaYqMonitorContent from './settings/MideaYqMonitorContent.vue'
 
 const message = useMessage()
@@ -444,13 +442,12 @@ const showWechatBrowserGuide = computed(() => isWeChatBrowser.value)
 const showGlobalSettings = ref(false)
 const settingsActiveTab = ref('model')
 const settingsWorkbenchInitialTab = ref('skills')
-const validSettingsTabs = ['model', 'im', 'capability', 'project']
+const validSettingsTabs = ['model', 'im', 'capability']
 const ADMIN_PHONE = '15527109305'
 const settingsTitleKeys = {
   model: 'settingsMenu.model',
   im: 'settingsMenu.imBots',
-  capability: 'settingsMenu.capabilityWorkbench',
-  project: 'settingsMenu.projectManagement'
+  capability: 'settingsMenu.capabilityWorkbench'
 }
 const normalizePhone = phone => String(phone || '').replace(/\D/g, '').slice(-11)
 const isAdminPhoneValue = phone => normalizePhone(phone) === ADMIN_PHONE
@@ -610,7 +607,6 @@ const handleOpenSettings = async (event) => {
   const isAdminPhone = isAdminPhoneValue(currentUser.phone)
   if (requestedTab === 'model' && !isAdminPhone) return
   if (requestedTab === 'im' && !isAdminPhone) return
-  if (requestedTab === 'project' && !isAdminPhone) return
   settingsWorkbenchInitialTab.value = requestedWorkbenchTab || 'skills'
   settingsActiveTab.value = validSettingsTabs.includes(requestedTab) ? requestedTab : 'capability'
   showGlobalSettings.value = true
@@ -2336,10 +2332,6 @@ const handleToggleTheme = async () => {
 }
 
 .settings-modal-body :deep(.settings-workbench) {
-  min-height: 560px;
-}
-
-.settings-modal-body :deep(.project-management) {
   min-height: 560px;
 }
 

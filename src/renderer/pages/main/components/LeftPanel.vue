@@ -483,7 +483,6 @@ const settingsOptions = computed(() => {
   if (isSuperAdmin.value) {
     options.push({ label: t('settingsMenu.model'), key: 'model-settings', icon: renderMenuIcon('settings') })
     options.push({ label: t('settingsMenu.imBots'), key: 'im-bot-settings', icon: renderMenuIcon('robot') })
-    options.push({ label: t('settingsMenu.projectManagement'), key: 'project-management', icon: renderMenuIcon('folderOpen') })
   }
 
   if (currentUser.value) {
@@ -587,7 +586,6 @@ const handleSettingsSelect = async (key) => {
 
   if (key === 'model-settings' && !isSuperAdmin.value) return
   if (key === 'im-bot-settings' && !isSuperAdmin.value) return
-  if (key === 'project-management' && !isSuperAdmin.value) return
   if (!window.electronAPI) {
     console.error('Electron API not available')
     return
@@ -599,13 +597,6 @@ const handleSettingsSelect = async (key) => {
       break
     case 'im-bot-settings':
       window.electronAPI.openIMBotSettings()
-      break
-    case 'project-management':
-      if (window.electronAPI.openProjectManagement) {
-        window.electronAPI.openProjectManagement()
-      } else if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('web:open-settings', { detail: { type: 'project' } }))
-      }
       break
     case 'capability-settings':
       window.electronAPI.openSettingsWorkbench()
