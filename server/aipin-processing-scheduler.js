@@ -1,6 +1,6 @@
 const DEFAULT_AIPIN_SCHEDULER_CONFIG = {
-  minConcurrentAgents: 5,
-  maxConcurrentAgents: 20,
+  minConcurrentAgents: 10,
+  maxConcurrentAgents: 30,
   memorySoftLimitPercent: 75,
   memoryHardLimitPercent: 88,
   memoryResumePercent: 68,
