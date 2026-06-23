@@ -637,7 +637,7 @@ async function prepareAipinAdminItemForProcess({ userDataPath, processingQueue, 
   return task
 }
 
-function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, processNextTask, feishuPusher, requireAdmin }) {
+function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, processNextTask, feishuPusher, requireAdmin, requireUser }) {
   if (!app || typeof app.get !== 'function' || typeof app.post !== 'function') {
     throw new Error('Express app with get/post is required')
   }
@@ -660,7 +660,17 @@ function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, proc
     }
   }
 
-  app.get('/api/aipin-data/admin/pushes', handleAdminRoute(async req => {
+  const requireReadUser = typeof requireUser === 'function' ? requireUser : requireAdmin
+  const handleReadRoute = handler => async (req, res) => {
+    try {
+      requireReadUser(req)
+      res.json(await handler(req))
+    } catch (err) {
+      sendRouteError(res, err)
+    }
+  }
+
+  app.get('/api/aipin-data/admin/pushes', handleReadRoute(async req => {
     const result = await listAipinAdminPushes({
       userDataPath,
       processingQueue,
@@ -675,7 +685,7 @@ function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, proc
     }
   }))
 
-  app.get('/api/aipin-data/admin/items', handleAdminRoute(async req => {
+  app.get('/api/aipin-data/admin/items', handleReadRoute(async req => {
     const result = await listAipinAdminItems({
       userDataPath,
       processingQueue,
@@ -693,7 +703,7 @@ function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, proc
     }
   }))
 
-  app.get('/api/aipin-data/admin/items/:itemId', handleAdminRoute(async req => ({
+  app.get('/api/aipin-data/admin/items/:itemId', handleReadRoute(async req => ({
     success: true,
     item: await getAipinAdminItemDetail({
       userDataPath,
@@ -701,7 +711,7 @@ function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, proc
     })
   })))
 
-  app.get('/api/aipin-data/admin/pushes/:requestId', handleAdminRoute(async req => ({
+  app.get('/api/aipin-data/admin/pushes/:requestId', handleReadRoute(async req => ({
     success: true,
     push: await getAipinAdminPushDetail({
       userDataPath,

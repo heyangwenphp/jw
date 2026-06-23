@@ -640,7 +640,8 @@ registerAipinDataAdminRoutes({
   processingQueue: aipinProcessingQueue,
   processNextTask: processNextAipinTask,
   feishuPusher: aipinFeishuPusher,
-  requireAdmin: requireWeixinNotifyAdmin
+  requireAdmin: requireWeixinNotifyAdmin,
+  requireUser: requireWebUser
 })
 registerAipinDataTaskRoutes({
   app,

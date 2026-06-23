@@ -125,6 +125,7 @@
                 <div class="row-actions">
                   <button class="text-btn primary" @click="openDetail(item)">查看</button>
                   <button
+                    v-if="canManageMonitor"
                     class="text-btn"
                     :disabled="processingItemId === item.itemId || item.status === 'processing'"
                     @click="processItem(item)"
@@ -132,7 +133,7 @@
                     {{ processButtonText(item) }}
                   </button>
                   <button
-                    v-if="canPushItem(item)"
+                    v-if="canManageMonitor && canPushItem(item)"
                     class="text-btn primary"
                     :disabled="pushingItemId === item.itemId"
                     @click="pushItem(item)"
@@ -204,6 +205,7 @@ const pushStatusFilter = ref('')
 const pushFlagFilter = ref('')
 const publishStartFilter = ref('')
 const publishEndFilter = ref('')
+const currentUser = ref(null)
 const showDetail = ref(false)
 const selectedItem = ref(null)
 const detailLoading = ref(false)
@@ -225,6 +227,11 @@ const summary = ref({
   emotionNegative: 0
 })
 const message = useMessage()
+const ADMIN_PHONE = '15527109305'
+const normalizePhone = phone => String(phone || '').replace(/\D/g, '').slice(-11)
+const canManageMonitor = computed(() => (
+  Boolean(currentUser.value?.isAdmin) || normalizePhone(currentUser.value?.phone) === ADMIN_PHONE
+))
 const processedFieldKeys = new Set([
   'summary',
   'optimizedSummary',
@@ -531,6 +538,17 @@ const goToPage = page => {
   loadItems()
 }
 
+const loadCurrentUser = async () => {
+  if (!window.electronAPI?.authGetCurrentUser) return
+  try {
+    const result = await window.electronAPI.authGetCurrentUser()
+    currentUser.value = result?.user || null
+  } catch (err) {
+    console.warn('[MideaYqMonitor] Failed to load current user:', err)
+    currentUser.value = null
+  }
+}
+
 const statusText = status => ({
   pending: '待处理',
   processing: '处理中',
@@ -602,7 +620,10 @@ const selectedPreviewData = computed(() => {
 
 const previewJson = computed(() => JSON.stringify(selectedPreviewData.value, null, 2))
 
-onMounted(loadItems)
+onMounted(async () => {
+  await loadCurrentUser()
+  await loadItems()
+})
 </script>
 
 <style scoped>

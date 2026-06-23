@@ -470,7 +470,7 @@ describe('AipinData push API routes', () => {
     })
   })
 
-  it('lists pushed payloads for the Midea admin monitor only', async () => {
+  it('lets logged-in users view Midea monitor data while keeping write actions admin-only', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'jedi-aipin-admin-'))
     try {
       const { registerAipinDataAdminRoutes, storeAipinDataPayload } = require('../server/aipin-data-routes.js')
@@ -511,14 +511,32 @@ describe('AipinData push API routes', () => {
             throw err
           }
           return req.currentUser
+        },
+        requireUser: req => {
+          if (!req.currentUser) {
+            const err = new Error('Login required')
+            err.code = 'AUTH_REQUIRED'
+            throw err
+          }
+          return req.currentUser
         }
       })
 
-      const denied = await invoke(routes, 'GET', '/api/aipin-data/admin/pushes', {
+      const normalRead = await invoke(routes, 'GET', '/api/aipin-data/admin/pushes', {
         currentUser: { phone: '13900000000' }
       })
-      expect(denied.statusCode).toBe(403)
-      expect(denied.body).toEqual({ success: false, error: 'Forbidden' })
+      expect(normalRead.statusCode).toBe(200)
+      expect(normalRead.body).toMatchObject({
+        success: true,
+        total: 1
+      })
+
+      const deniedWrite = await invoke(routes, 'POST', '/api/aipin-data/admin/tasks/:taskId/process', {
+        params: { taskId: 'aipin_task_20260609_021001_queue01' },
+        currentUser: { phone: '13900000000' }
+      })
+      expect(deniedWrite.statusCode).toBe(403)
+      expect(deniedWrite.body).toEqual({ success: false, error: 'Forbidden' })
 
       const res = await invoke(routes, 'GET', '/api/aipin-data/admin/pushes', {
         currentUser: { phone: '15527109305' }
