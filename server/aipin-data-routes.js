@@ -670,6 +670,14 @@ function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, proc
     }
   }
 
+  const handlePublicReadRoute = handler => async (req, res) => {
+    try {
+      res.json(await handler(req))
+    } catch (err) {
+      sendRouteError(res, err)
+    }
+  }
+
   app.get('/api/aipin-data/admin/pushes', handleReadRoute(async req => {
     const result = await listAipinAdminPushes({
       userDataPath,
@@ -685,7 +693,7 @@ function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, proc
     }
   }))
 
-  app.get('/api/aipin-data/admin/items', handleReadRoute(async req => {
+  app.get('/api/aipin-data/admin/items', handlePublicReadRoute(async req => {
     const result = await listAipinAdminItems({
       userDataPath,
       processingQueue,
@@ -703,7 +711,7 @@ function registerAipinDataAdminRoutes({ app, userDataPath, processingQueue, proc
     }
   }))
 
-  app.get('/api/aipin-data/admin/items/:itemId', handleReadRoute(async req => ({
+  app.get('/api/aipin-data/admin/items/:itemId', handlePublicReadRoute(async req => ({
     success: true,
     item: await getAipinAdminItemDetail({
       userDataPath,

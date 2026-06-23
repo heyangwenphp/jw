@@ -572,6 +572,74 @@ describe('AipinData push API routes', () => {
     }
   })
 
+  it('lets anyone view Midea monitor items without a session', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'jedi-aipin-public-items-'))
+    try {
+      const { registerAipinDataAdminRoutes, storeAipinDataPayload } = require('../server/aipin-data-routes.js')
+      const { app, routes } = createApp()
+      const stored = await storeAipinDataPayload({
+        userDataPath,
+        payload: [{ news_uuid: 'public-item-1', news_title: 'Public monitor item' }],
+        now: () => new Date('2026-06-09T02:10:00.000Z'),
+        randomHex: () => 'public01'
+      })
+
+      registerAipinDataAdminRoutes({
+        app,
+        userDataPath,
+        processingQueue: {
+          listTasks: async () => []
+        },
+        requireAdmin: () => {
+          const err = new Error('Forbidden')
+          err.code = 'AUTH_FORBIDDEN'
+          throw err
+        },
+        requireUser: () => {
+          const err = new Error('Login required')
+          err.code = 'AUTH_REQUIRED'
+          throw err
+        }
+      })
+
+      const listRes = await invoke(routes, 'GET', '/api/aipin-data/admin/items')
+      expect(listRes.statusCode).toBe(200)
+      expect(listRes.body).toMatchObject({
+        success: true,
+        total: 1,
+        items: [
+          expect.objectContaining({
+            itemId: `${stored.requestId}__item_0`,
+            newsUuid: 'public-item-1',
+            newsTitle: 'Public monitor item'
+          })
+        ]
+      })
+
+      const detailRes = await invoke(routes, 'GET', '/api/aipin-data/admin/items/:itemId', {
+        params: { itemId: `${stored.requestId}__item_0` }
+      })
+      expect(detailRes.statusCode).toBe(200)
+      expect(detailRes.body).toMatchObject({
+        success: true,
+        item: expect.objectContaining({
+          itemId: `${stored.requestId}__item_0`,
+          data: expect.objectContaining({
+            news_uuid: 'public-item-1'
+          })
+        })
+      })
+
+      const writeRes = await invoke(routes, 'POST', '/api/aipin-data/admin/tasks/:taskId/process', {
+        params: { taskId: 'public-task-1' }
+      })
+      expect(writeRes.statusCode).toBe(403)
+      expect(writeRes.body).toEqual({ success: false, error: 'Forbidden' })
+    } finally {
+      rmSync(userDataPath, { recursive: true, force: true })
+    }
+  })
+
   it('paginates Midea admin monitor pushes with 20 records by default', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'jedi-aipin-admin-pages-'))
     try {
