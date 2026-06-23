@@ -60,7 +60,6 @@ const { processAipinTask } = require('./aipin-agent-processor')
 const { AipinDataStore } = require('./aipin-data-store')
 const { AipinFeishuPusher } = require('./aipin-feishu-pusher')
 const { AipinProcessingScheduler } = require('./aipin-processing-scheduler')
-const { startAipinOutputCleanupSchedule } = require('./aipin-output-cleanup')
 const { registerProjectLibraryRoutes } = require('./project-library-routes')
 const { resolveWebUserDataPath } = require('./user-data-path')
 const { ProjectAgentProfileManager } = require('../src/main/managers/project-agent-profile-manager')
@@ -500,11 +499,6 @@ agentSessionManager.emit = function (event, ...args) {
 const aipinProcessingQueue = new AipinProcessingQueue({ userDataPath })
 const aipinDataStore = new AipinDataStore({ userDataPath })
 const aipinFeishuPusher = new AipinFeishuPusher({ dataStore: aipinDataStore })
-const aipinOutputCleanupSchedule = startAipinOutputCleanupSchedule({
-  userDataPath,
-  retentionDays: 7,
-  getOutputBaseDir: () => agentSessionManager._getOutputBaseDir?.()
-})
 
 async function processClaimedAipinTask(task, req = null) {
   if (!task) return null
@@ -2397,7 +2391,6 @@ httpServer.listen(PORT, () => {
 process.on('SIGINT', async () => {
   console.log('[Server] Shutting down...')
   try {
-    aipinOutputCleanupSchedule.stop()
     dingtalkBridge.stop()
     feishuBridge.stop()
     weixinBridge.stop()
@@ -2413,7 +2406,6 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   console.log('[Server] Shutting down...')
   try {
-    aipinOutputCleanupSchedule.stop()
     dingtalkBridge.stop()
     feishuBridge.stop()
     weixinBridge.stop()
