@@ -1348,7 +1348,8 @@ class AgentSessionManager extends EventEmitter {
         console.error('[AgentSession] Failed to create custom outputBaseDir, falling back:', err)
       }
     }
-    return path.join(os.homedir(), 'jedi-web-agent-output')
+    const basePath = this.configManager?.userDataPath || path.join(os.homedir(), 'jedi-web-agent-output')
+    return path.join(basePath, 'agent-output')
   }
 
   _normalizeStandaloneReportMode(mode) {

@@ -1245,7 +1245,7 @@ app.post('/api/agent/uploads', async (req, res) => {
     const upload = isMultipart ? await readMultipartUpload(req) : null
     const body = upload?.fields || req.body || {}
     const requestedCwd = typeof body?.cwd === 'string' ? body.cwd.trim() : ''
-    const uploadCwd = requestedCwd || projectRoot
+    const uploadCwd = requestedCwd || userDataPath
     if (fs.existsSync(uploadCwd) && !fs.statSync(uploadCwd).isDirectory()) {
       return res.status(400).json({ error: 'Upload working directory not found' })
     }

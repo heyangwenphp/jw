@@ -1395,7 +1395,7 @@ class ConfigManager {
     const config = this.getConfig();
     const proxy = config.mcp?.proxy || { enabled: false, url: '' };
     // 检测 proxy-support 环境是否已就绪
-    const proxySupportDir = path.join(os.homedir(), '.claude', 'proxy-support');
+    const proxySupportDir = path.join(this.userDataPath, '.claude', 'proxy-support');
     proxy.proxySupportReady = fs.existsSync(path.join(proxySupportDir, 'node_modules', 'undici'));
     proxy.proxySupportPath = proxySupportDir;
     return proxy;
@@ -1432,7 +1432,7 @@ class ConfigManager {
    * 确保代理支持环境就绪（从 app 资源复制 undici + 生成 preload 脚本）
    */
   async ensureProxySupport(proxyUrl) {
-    const proxySupportDir = path.join(os.homedir(), '.claude', 'proxy-support');
+    const proxySupportDir = path.join(this.userDataPath, '.claude', 'proxy-support');
     const scriptPath = path.join(proxySupportDir, 'proxy-setup.cjs');
     const undiciDir = path.join(proxySupportDir, 'node_modules', 'undici');
 

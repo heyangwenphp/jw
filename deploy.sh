@@ -3,27 +3,25 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="$APP_DIR/logs"
 
 PORT="${PORT:-${JEDI_WEB_PORT:-${BACKEND_PORT:-3456}}}"
 NODE_ENV="${NODE_ENV:-production}"
+JEDI_WEB_DATA_DIR="${JEDI_WEB_DATA_DIR:-/data/datas}"
+LOG_DIR="$JEDI_WEB_DATA_DIR/logs"
 PUBLIC_PAGE="/pages/main/index.html"
 HEALTH_PATH="/api/health"
 DIST_ENTRY="$APP_DIR/dist$PUBLIC_PAGE"
 PM2_APP_NAME="${PM2_APP_NAME:-jedi-web}"
 SERVER_SCRIPT="$APP_DIR/server/index.js"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
-DEPLOY_REMOTE="${DEPLOY_REMOTE:-origin}"
-DEPLOY_BRANCH="${DEPLOY_BRANCH:-}"
-SKIP_GIT_PULL="${SKIP_GIT_PULL:-0}"
 SKIP_NPM_INSTALL="${SKIP_NPM_INSTALL:-0}"
-DEPLOY_CHANGED_FILES=""
 
 cd "$APP_DIR"
 mkdir -p "$LOG_DIR"
 
 export PORT
 export NODE_ENV
+export JEDI_WEB_DATA_DIR
 
 need_cmd() {
   local cmd="$1"
@@ -40,14 +38,6 @@ require_node_runtime() {
 
 require_pm2() {
   need_cmd pm2
-}
-
-require_clean_tracked_worktree() {
-  if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules --; then
-    echo "Tracked files have local changes. Refusing to pull automatically." >&2
-    echo "Commit/stash them first, or run SKIP_GIT_PULL=1 bash deploy.sh to deploy current files." >&2
-    exit 1
-  fi
 }
 
 public_url() {
@@ -145,76 +135,6 @@ install_deps() {
   npm run rebuild:sqlite --if-present
 }
 
-install_deps_for_deploy() {
-  require_node_runtime
-
-  if [ "$SKIP_NPM_INSTALL" = "1" ]; then
-    echo "Skipping dependency install because SKIP_NPM_INSTALL=1."
-    return
-  fi
-
-  if [ ! -d "$APP_DIR/node_modules" ]; then
-    echo "node_modules not found; installing dependencies..."
-    install_deps
-    return
-  fi
-
-  if printf "%s\n" "$DEPLOY_CHANGED_FILES" | grep -Eq '^(package\.json|package-lock\.json)$'; then
-    echo "package.json or package-lock.json changed; installing dependencies..."
-    install_deps
-    return
-  fi
-
-  echo "Dependencies unchanged; skipping npm install."
-}
-
-update_code() {
-  if [ "$SKIP_GIT_PULL" = "1" ]; then
-    echo "Skipping git pull because SKIP_GIT_PULL=1."
-    return
-  fi
-
-  need_cmd git
-
-  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Not a git working tree; skipping code update."
-    return
-  fi
-
-  require_clean_tracked_worktree
-
-  local before after branch upstream
-  before="$(git rev-parse HEAD)"
-  branch="$DEPLOY_BRANCH"
-  if [ -z "$branch" ]; then
-    branch="$(git branch --show-current)"
-  fi
-
-  echo "Fetching latest code from $DEPLOY_REMOTE..."
-  git fetch "$DEPLOY_REMOTE" --prune
-
-  if upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"; then
-    echo "Updating current branch from $upstream..."
-    git pull --ff-only
-  else
-    if [ -z "$branch" ]; then
-      echo "Current checkout has no branch and no upstream. Set DEPLOY_BRANCH or SKIP_GIT_PULL=1." >&2
-      exit 1
-    fi
-    echo "Updating current branch from $DEPLOY_REMOTE/$branch..."
-    git pull --ff-only "$DEPLOY_REMOTE" "$branch"
-  fi
-
-  after="$(git rev-parse HEAD)"
-  if [ "$before" = "$after" ]; then
-    DEPLOY_CHANGED_FILES=""
-    echo "Code already up to date."
-  else
-    DEPLOY_CHANGED_FILES="$(git diff --name-only "$before" "$after")"
-    echo "Updated code: $before -> $after"
-  fi
-}
-
 ensure_dist() {
   if [ -f "$DIST_ENTRY" ]; then
     return
@@ -235,7 +155,7 @@ pm2_start_fresh() {
   ensure_dist
 
   echo "Starting Jedi Web via PM2 on port $PORT..."
-  env PORT="$PORT" NODE_ENV="$NODE_ENV" pm2 start "$SERVER_SCRIPT" \
+  env PORT="$PORT" NODE_ENV="$NODE_ENV" JEDI_WEB_DATA_DIR="$JEDI_WEB_DATA_DIR" pm2 start "$SERVER_SCRIPT" \
     --name "$PM2_APP_NAME" \
     --cwd "$APP_DIR" \
     --log "$LOG_DIR/jedi-web.log" \
@@ -270,7 +190,7 @@ pm2_restart() {
 
   if pm2_has_app; then
     echo "Restarting Jedi Web (PM2 $PM2_APP_NAME) on port $PORT..."
-    env PORT="$PORT" NODE_ENV="$NODE_ENV" pm2 restart "$PM2_APP_NAME" --update-env
+    env PORT="$PORT" NODE_ENV="$NODE_ENV" JEDI_WEB_DATA_DIR="$JEDI_WEB_DATA_DIR" pm2 restart "$PM2_APP_NAME" --update-env
     pm2 save
     echo "URL: $(page_url)"
   else
@@ -342,8 +262,6 @@ wait_for_health() {
 }
 
 deploy() {
-  update_code
-  install_deps_for_deploy
   build_frontend
   pm2_restart
   wait_for_health
@@ -367,9 +285,6 @@ print_config() {
   echo "JEDI_WEB_DATA_DIR=${JEDI_WEB_DATA_DIR:-}"
   echo "JEDI_WEB_USE_PROJECT_DATA_DIR=${JEDI_WEB_USE_PROJECT_DATA_DIR:-}"
   echo "JEDI_WEB_SECURE_COOKIE=${JEDI_WEB_SECURE_COOKIE:-}"
-  echo "DEPLOY_REMOTE=$DEPLOY_REMOTE"
-  echo "DEPLOY_BRANCH=${DEPLOY_BRANCH:-<current branch>}"
-  echo "SKIP_GIT_PULL=$SKIP_GIT_PULL"
   echo "SKIP_NPM_INSTALL=$SKIP_NPM_INSTALL"
   echo "URL=$(page_url)"
   echo "HEALTH=$(health_url)"
@@ -377,11 +292,10 @@ print_config() {
 
 usage() {
   cat <<'EOF'
-Usage: bash deploy.sh {deploy|update|install|build|start|stop|restart|rebuild|status|health|logs|config}
+Usage: bash deploy.sh {deploy|install|build|start|stop|restart|rebuild|status|health|logs|config}
 
 Commands:
-  deploy    Pull latest code, install deps when needed, build, restart PM2, then wait for /api/health
-  update    Pull latest code only, using git pull --ff-only
+  deploy    Build frontend, restart PM2, then wait for /api/health
   install   Install npm dependencies and rebuild better-sqlite3 when configured
   build     Build frontend only
   start     Start PM2, or restart it if the app already exists
@@ -395,9 +309,8 @@ Commands:
 
 Examples:
   bash deploy.sh
-  PUBLIC_URL=https://kc.newmin.cn bash deploy.sh deploy
-  PORT=3456 JEDI_WEB_DATA_DIR=/srv/jedi-web-data bash deploy.sh deploy
-  SKIP_GIT_PULL=1 bash deploy.sh
+  PUBLIC_URL=https://jw.gsdata.cn bash deploy.sh
+  PORT=3456 JEDI_WEB_DATA_DIR=/srv/jedi-web-data bash deploy.sh
   SKIP_NPM_INSTALL=1 bash deploy.sh
   PORT=4000 bash deploy.sh restart
 EOF
@@ -406,9 +319,6 @@ EOF
 case "${1:-deploy}" in
   deploy)
     deploy
-    ;;
-  update)
-    update_code
     ;;
   install|deps)
     install_deps
